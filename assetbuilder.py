@@ -120,7 +120,6 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 	headerData.countOfBinaryBytes = 0
 	headerData.countOfIntegers = 1 # All of the actual kv Data plus countOfStrings, which is always here, so we start from one.
 	headerData.countOfEightByteValues = 0
-	# 8 bytes of unknown stuff
 	headerData.stringAndTypesBufferSize = 0 #! length of strings + length of types combined
 	#! Apparently these are used to preallocate something, for safety I'll put in FFFF, it seems to be working fine so far.
 	preallocValues = b'\xFF\xFF\xFF\xFF'
@@ -211,13 +210,6 @@ def debugWriteListToFile(name, list):
 	for v in list:
 		file.write(str(v)+"\n")
 	file.close()
-
-def generateDataCrc(redi_data, pulse_file):
-	if redi_data.value['m_InputDependencies'][0]['m_nFileCRC'] == 0:
-		data = bytes(pulse_file.read(), "ascii")
-		crc = zlib.crc32(data)
-		redi_data.value['m_InputDependencies'][0]['m_nFileCRC'] = crc
-		print("CRC in REDI data is set to 0. Using automatically generated CRC: "+str(crc))
 
 def writeKVStructure(obj, header, inArray, optimizeDict=False, optimizeDouble=False, optimizeInt=False, optimizeString=False):
 	#global types, countOfIntegers, countOfEightByteValues, countOfStrings, binaryBytes, countOfBinaryBytes
@@ -447,7 +439,7 @@ def parseJsonStructure(file: str):
 
 if __name__ == "__main__":
 	example = '''example:
-	
+
 	%(prog)s -s pulse_schema.json -o output.vpulse_c
 	%(prog)s -p vrr -f vrr_redi.kv3 vrr_data.kv3 -o output.vrr_c'''
 	parser = argparse.ArgumentParser(description="Tool to assemble Source 2 assets manually.", epilog=example,
