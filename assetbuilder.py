@@ -76,9 +76,9 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 	fileSize += (16 + 12*len(blocks)) # 16 is the size of the header, 12 is the size of each block header (name, offset, size)
 	headerPadAmount = -fileSize % 16
 	fileSize += headerPadAmount # the data is also padded with 0s to align to 16 bytes.
-	# the offsets are relative to where they are placed in the file, we should know the first one's value, since the first block of data is right after the header.
 
-	# first offset: 8 is the offset to another block info, every block info is 12 bytes long. 
+	# the offsets are relative to where they are placed in the file, we should know the first one's value, since the first block of data is right after the header.
+	# first offset: 8 is the offset to another block info, every block info is 12 bytes long.
 	currentOffset = 8 + ((len(blocks) - 1) * 12) + headerPadAmount
 	dataBlocks = []
 	for idx, block in enumerate(blocks):
@@ -94,9 +94,10 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 
 			combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), blockHeaderInfo.size.to_bytes(4, 'little')])
 			currentOffset = currentOffset + blockHeaderInfo.size + blockHeaderInfo.additional_bytes
+		if block.type == "text":
+			dataBlocks.append(block.data)
+			currentOffset += len(block.data)
 		currentOffset -= 12 # -12 because we need to account where the next offset value is placed.
-	
-
 	
 	binData = b''.join([fileSize.to_bytes(4, 'little'), headerVersion, version, blockOffset, blockCount, # FILE HEADER (16 bytes)
 				   combinedBlockHeaderData, (b'\x00'*headerPadAmount)]) # HEADER DATA FOR BLOCKS + PADDING
@@ -105,9 +106,8 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 	return binData
 
 def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str = "unnamed block"):
-	#global strings, types, binaryBytes, countOfIntegers, countOfEightByteValues, stringAndTypesBufferSize, doubles, countOfStrings, countOfBinaryBytes
 	headerData = KVBaseData()
-	kv3ver = b'\x04' # Should always be this
+	kv3ver = b'\x04' # For now we only support version 4 of KV3
 	encodedGUID = guid
 	constantsAfterGUID = b'\x01\x00\x00\x00\x00\x00\x00\x40' # contains compressionMethod, compressionDictionaryID and compressionFrameSize. They're always the same for pulse.
 	# The redefinitions here are written merely for the sake of readability.
@@ -120,10 +120,8 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 	#! Apparently these are used to preallocate something, for safety I'll put in FFFF, it seems to be working fine so far.
 	preallocValues = b'\xFF\xFF\xFF\xFF'
 
-	headerData.uncompressedSize = 0 # ! decompressed kv3 block size?
-	headerData.compressedSize = 0 # ! compressed kv3 block size?
-	blockCount = 0 # always the same
-	blockTotalSize = 0 # always the same
+	headerData.uncompressedSize = 0 # decompressed kv3 block size
+	headerData.compressedSize = 0 # compressed kv3 block size
 
 	unknowns = b'\x00'*8 # Appears to always be the same - can ignore.
 	# after all this we finally have actual kv data...
@@ -135,9 +133,6 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 	headerData.countOfStrings = 0
 	# after countOfStrings we have data about the structure, mostly because the data is actually just integers that references stuff.
 	kvData = b''
-	#integers = list[int] = [] #! countOfIntegers many ints, duh # we also need some 0s here to align to doubles so mod 8. So we probably have to add one 0 if it doesn't align.
-	# after list the structure we have list of doubles
-	# Check if data before the list of doubles aligns to mod8 (done below)
 	headerData.doubles = []
 	doublesBytes = b"" # transformed for appending
 	# after list of doubles we have a list of null terminated strings:
@@ -148,21 +143,16 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 	headerData.types = []
 	# this comes after types list.
 	noBlocksTrailer = 4293844224 # this should always be this value.
-
 	kvData = writeKVStructure(block_data.value, headerData, False)
-
 	headerData.countOfStrings = len(headerData.strings)
 	headerData.countOfBinaryBytes = len(headerData.binaryBytes)
-	#headerData.countOfEightByteValues = len(headerData.doubles)
-	# countOfIntegers should be already calculated.
 	for s in headerData.strings:
 		stringsBytes.append(bytes(s, "ascii")+b'\x00')
 
 	headerData.stringAndTypesBufferSize = len(headerData.types) + len(b''.join(stringsBytes))
 
 	headerData.binaryBytes = bytes(headerData.binaryBytes)
-	while len(headerData.binaryBytes) % 4 != 0: # align to 4 bytes
-		headerData.binaryBytes+=b'\x00'
+	headerData.binaryBytes += b'\x00'* (-len(headerData.binaryBytes) % 4) # align to 4 bytes
 
 	for v in headerData.doubles:
 		doublesBytes += struct.pack("<d", v) # little-endian eight bytes
@@ -186,31 +176,20 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 		bytesToAdd = 16 - (len(blockDataCompressed + blockDataBase) % 16)
 		blockDataCompressed += b'\x00'*bytesToAdd
 		header_info.additional_bytes += bytesToAdd
-	# print("blockDataBase:\n\n\n")
-	# print(blockDataBase)
 
-	#print("blockDataUncompressed:\n")
-	#print(blockDataUncompressed)
-
-	#print("blockDataCompressed:\n")
-	#print(blockDataCompressed)
-	print(f"Stats for {visualName} block (UUID: {str(UUID(bytes_le=guid))}):")
-	print(f"countOfStrings: {headerData.countOfStrings} | len(strings): {len(headerData.strings)}")
-	print(f"countOfIntegers: {headerData.countOfIntegers}")
-	print(f"countOfDoubles: {headerData.countOfEightByteValues}")
-	print(f"countOfBinaryBytes: {headerData.countOfBinaryBytes}")
-	print(f"stringsAndTypesBufferSize {headerData.stringAndTypesBufferSize}")
-	print(f"typesLength {len(headerData.types)}")
-	print(f"uncompressedSize: {len(blockDataUncompressed)}")
-	print(f"compressedSize: {len(blockDataCompressed)}")
-	print(f"Final block size: {header_info.size}\n")
-	# print(f"List of types:")
-	# for type in headerData.types:
-	# 	print(f"{KVTypes(type).name}")
-	#debugWriteListToFile("types.txt", headerData.types)
+	if g_isVerbose:
+		print(f"Stats for {visualName} block (UUID: {str(UUID(bytes_le=guid))}):")
+		print(f"countOfStrings: {headerData.countOfStrings} | len(strings): {len(headerData.strings)}")
+		print(f"countOfIntegers: {headerData.countOfIntegers}")
+		print(f"countOfDoubles: {headerData.countOfEightByteValues}")
+		print(f"countOfBinaryBytes: {headerData.countOfBinaryBytes}")
+		print(f"stringsAndTypesBufferSize {headerData.stringAndTypesBufferSize}")
+		print(f"typesLength {len(headerData.types)}")
+		print(f"uncompressedSize: {len(blockDataUncompressed)}")
+		print(f"compressedSize: {len(blockDataCompressed)}")
+		print(f"Final block size: {header_info.size}\n")
 
 	return blockDataBase + blockDataCompressed
-	#return blockDataUncompressed
 
 def debugWriteListToFile(name, list):
 	file = open(name, "w")
@@ -408,7 +387,12 @@ def writeFileFromPreset(preset: str, files: list[str]):
 		raise
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"One of the specified files doesn't exist: {e}")
-	
+
+g_isVerbose = False
+def printDebug(msg):
+	if g_isVerbose:
+		print(msg)
+
 def parseJsonStructure(file: str):
 	try:
 		with open(file, "r") as f:
@@ -459,7 +443,9 @@ if __name__ == "__main__":
 					 help="Output file name",
 					 type=str, metavar="<output file>", required=True)
 	args = parser.parse_args()
-
+	
+	if args.verbose:
+		g_isVerbose = True
 	binaryData = None
 	try:
 		if args.schema is not None: # we are using a schema JSON file
