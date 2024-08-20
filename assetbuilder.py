@@ -4,7 +4,7 @@ import struct
 import lz4.block
 from enum import IntEnum
 from dataclasses import dataclass, field
-import zlib
+from typing import Optional
 from uuid import UUID
 import argparse
 import json
@@ -211,11 +211,11 @@ def debugWriteListToFile(name, list):
 		file.write(str(v)+"\n")
 	file.close()
 
-def writeKVStructure(obj, header, inArray, optimizeDict=False, optimizeDouble=False, optimizeInt=False, optimizeString=False):
+def writeKVStructure(obj, header, inArray, lastArrayType: Optional[KVTypes] = None):
 	#global types, countOfIntegers, countOfEightByteValues, countOfStrings, binaryBytes, countOfBinaryBytes
 	data: list[bytes] = []
 	if type(obj) is dict:
-		if optimizeDict == False: # read list if comment as to why we do that.
+		if lastArrayType != KVTypes.OBJECT:
 			header.types += KVTypes.OBJECT.to_bytes(1)
 		length: int = len(obj)
 		data += length.to_bytes(4, "little") # for dicts append length at start!
@@ -230,12 +230,11 @@ def writeKVStructure(obj, header, inArray, optimizeDict=False, optimizeDouble=Fa
 					header.countOfStrings += 1
 				data += stringID.to_bytes(4, "little")
 				header.countOfIntegers += 1
+			else:
+				raise ValueError("KV3 Keys must be strings.")
 			data += writeKVStructure(value, header, False)
 	elif type(obj) is list:
-		optimizeDict = False # looks like if we have multiple dicts inside one array they get treated as one, thus we don't add another type to the list. We will use this value to detect that.
-		optimizeDouble = False
-		optimizeInt = False
-		optimizeString = False
+		# looks like if we have inside one array they get treated as one, thus we don't add another type to the list. We will use this value to detect that.
 		if(len(obj) > 0 and len(obj) < 256):
 			header.types += KVTypes.ARRAY_TYPE_BYTE_LENGTH.to_bytes(1)
 			header.binaryBytes += len(obj).to_bytes(1)
@@ -244,20 +243,23 @@ def writeKVStructure(obj, header, inArray, optimizeDict=False, optimizeDouble=Fa
 			header.types += KVTypes.ARRAY_TYPED.to_bytes(1)
 			data += len(obj).to_bytes(4, "little")
 			header.countOfIntegers += 1
-		else:
+		else: # len == 0
 			header.types += KVTypes.ARRAY.to_bytes(1)
 			data += len(obj).to_bytes(4, "little")
 			header.countOfIntegers += 1
 		for val in obj:
-			data += writeKVStructure(val, header, True, optimizeDict=optimizeDict, optimizeDouble=optimizeDouble, optimizeInt=optimizeInt, optimizeString=optimizeString)
+			# we set the last array type here as arrays that contain the same type only save their type ONCE.
+			# this is known to be done for a few types described below. Explicit types like DOUBLE_ZERO or INT64_ONE seem to be always repeated.
+			# we use this value to check if we should omit the appending of the type when writing the data.
+			data += writeKVStructure(val, header, True, lastArrayType=lastArrayType)
 			if type(val) is dict:
-				optimizeDict = True
+				lastArrayType = KVTypes.OBJECT
 			elif isinstance(val, float):
-				optimizeDouble = True
+				lastArrayType = KVTypes.DOUBLE
 			elif isinstance(val, int):
-				optimizeInt = True
+				lastArrayType = KVTypes.INT32
 			elif isinstance(val, str):
-				optimizeString = True
+				lastArrayType = KVTypes.STRING
 	elif type(obj) is str:
 		stringID = len(header.strings) # we will be adding 1 if we're adding a string so this will actually point at the last element.
 		if obj in header.strings:
@@ -268,7 +270,7 @@ def writeKVStructure(obj, header, inArray, optimizeDict=False, optimizeDouble=Fa
 			header.strings.append(obj)
 			header.countOfStrings += 1
 		data += stringID.to_bytes(4, "little", signed=True)
-		if(optimizeString == False):
+		if(lastArrayType != KVTypes.STRING):
 			header.types += KVTypes.STRING.to_bytes(1)
 		header.countOfIntegers += 1
 	elif isinstance(obj, bool):
@@ -284,7 +286,7 @@ def writeKVStructure(obj, header, inArray, optimizeDict=False, optimizeDouble=Fa
 		elif obj == 1 and inArray == False:
 			header.types += KVTypes.INT64_ONE.to_bytes(1)
 		else:
-			if optimizeInt == False:
+			if lastArrayType != KVTypes.INT32:
 				header.types += KVTypes.INT32.to_bytes(1)
 			data += obj.to_bytes(4, "little", signed=True if obj < 0 else False)
 			header.countOfIntegers += 1
@@ -294,7 +296,7 @@ def writeKVStructure(obj, header, inArray, optimizeDict=False, optimizeDouble=Fa
 		elif obj == 1.0 and inArray == False:
 			header.types += KVTypes.DOUBLE_ONE.to_bytes(1)
 		else:
-			if optimizeDouble == False:
+			if lastArrayType != KVTypes.DOUBLE:
 				header.types += KVTypes.DOUBLE.to_bytes(1)
 			header.doubles.append(obj)
 			header.countOfEightByteValues += 1
