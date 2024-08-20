@@ -9,7 +9,6 @@ from uuid import UUID
 import argparse
 import json
 
-FORMAT_GUID = b'\x7C\x16\x12\x74\xE9\x06\x98\x46\xAF\xF2\xE6\x3E\xB5\x90\x37\xE7'
 class KVTypes(IntEnum):
 	STRING_MULTI = 0,
 	NULL = 1,
@@ -93,11 +92,14 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 			fileSize += blockHeaderInfo.size + blockHeaderInfo.additional_bytes
 
 			combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), blockHeaderInfo.size.to_bytes(4, 'little')])
-			currentOffset = currentOffset + blockHeaderInfo.size + blockHeaderInfo.additional_bytes
+			currentOffset += blockHeaderInfo.size + blockHeaderInfo.additional_bytes
 		if block.type == "text":
 			dataBlocks.append(block.data)
+			fileSize += len(block.data)
 			currentOffset += len(block.data)
-		currentOffset -= 12 # -12 because we need to account where the next offset value is placed.
+			printDebug(f"Stats for {block.name} block (UUID: {str(UUID(bytes_le=blockUUID))}):")
+			printDebug(f"Text size: {len(block.data)}\n")
+		currentOffset -= 12 # -12 because we need to account for where the next offset value is placed.
 	
 	binData = b''.join([fileSize.to_bytes(4, 'little'), headerVersion, version, blockOffset, blockCount, # FILE HEADER (16 bytes)
 				   combinedBlockHeaderData, (b'\x00'*headerPadAmount)]) # HEADER DATA FOR BLOCKS + PADDING
@@ -105,6 +107,7 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 		binData += block # DATA BLOCKS
 	return binData
 
+KV3_FORMAT_GUID = b'\x7C\x16\x12\x74\xE9\x06\x98\x46\xAF\xF2\xE6\x3E\xB5\x90\x37\xE7'
 def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str = "unnamed block"):
 	headerData = KVBaseData()
 	kv3ver = b'\x04' # For now we only support version 4 of KV3
@@ -122,7 +125,8 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 
 	headerData.uncompressedSize = 0 # decompressed kv3 block size
 	headerData.compressedSize = 0 # compressed kv3 block size
-
+	blockCount = 0 # always the same
+	blockTotalSize = 0 # always the same
 	unknowns = b'\x00'*8 # Appears to always be the same - can ignore.
 	# after all this we finally have actual kv data...
 
@@ -146,11 +150,11 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 	kvData = writeKVStructure(block_data.value, headerData, False)
 	headerData.countOfStrings = len(headerData.strings)
 	headerData.countOfBinaryBytes = len(headerData.binaryBytes)
+	# terminate all strings
 	for s in headerData.strings:
 		stringsBytes.append(bytes(s, "ascii")+b'\x00')
 
 	headerData.stringAndTypesBufferSize = len(headerData.types) + len(b''.join(stringsBytes))
-
 	headerData.binaryBytes = bytes(headerData.binaryBytes)
 	headerData.binaryBytes += b'\x00'* (-len(headerData.binaryBytes) % 4) # align to 4 bytes
 
@@ -160,19 +164,28 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 	infoSectionLen = len(kvData) + 4 + len(headerData.binaryBytes)
 	kvData += b'\x00'*(-infoSectionLen % 8) # make sure that ints align to 8 bytes, as we have doubles next!
 
-	blockDataUncompressed = headerData.binaryBytes + headerData.countOfStrings.to_bytes(4, "little") + bytes(kvData) + doublesBytes + b''.join(stringsBytes) + bytes(headerData.types) + noBlocksTrailer.to_bytes(4, "little")
-	blockDataCompressed = lz4.block.compress(blockDataUncompressed, mode='high_compression',compression=11,store_size=False) # values tested based on 2v2_enable.vpulse_c
+	blockDataUncompressed = b''.join([headerData.binaryBytes, headerData.countOfStrings.to_bytes(4, "little"),
+								  	bytes(kvData), doublesBytes, b''.join(stringsBytes), bytes(headerData.types),
+									noBlocksTrailer.to_bytes(4, "little")])
+	
+	# values tested based on 2v2_enable.vpulse_c
+	blockDataCompressed = lz4.block.compress(blockDataUncompressed, mode='high_compression',compression=11,store_size=False) 
 	uncompressedSize = len(blockDataUncompressed).to_bytes(4, "little")
 	compressedSize = len(blockDataCompressed).to_bytes(4, "little")
 
-	blockDataBase = b''
-	blockDataBase += kv3ver + "3VK".encode('ascii') + encodedGUID + constantsAfterGUID
-	blockDataBase += headerData.countOfBinaryBytes.to_bytes(4, 'little') + headerData.countOfIntegers.to_bytes(4, 'little') + headerData.countOfEightByteValues.to_bytes(4, 'little') + headerData.stringAndTypesBufferSize.to_bytes(4, "little")
-	blockDataBase += preallocValues + uncompressedSize + compressedSize + blockCount.to_bytes(4, "little") + blockTotalSize.to_bytes(4, "little") + unknowns
+	blockDataBase = b''.join([kv3ver, "3VK".encode('ascii'), encodedGUID, constantsAfterGUID,
+						   	headerData.countOfBinaryBytes.to_bytes(4, 'little'),
+							headerData.countOfIntegers.to_bytes(4, 'little'),
+							headerData.countOfEightByteValues.to_bytes(4, 'little'),
+							headerData.stringAndTypesBufferSize.to_bytes(4, "little"),
+						   	preallocValues, uncompressedSize, compressedSize, 
+							blockCount.to_bytes(4, "little"), blockTotalSize.to_bytes(4, "little"), 
+							unknowns])
 
 	header_info.size = len(blockDataBase + blockDataCompressed)
 	if alignEnd == True:
-		# ! Assumption from what I observed: All blocks after another start aligned to 16 bytes, so if we don't have enough bytes for a full line at the end in hex editor then append 0s and only then start the next block. This is probably related to how offsets work here or smth.
+		# ! Assumption from what I observed: All blocks after another start aligned to 16 bytes, 
+		# ! so if we don't have enough bytes for a full line at the end in hex editor then append 0s and only then start the next block. 
 		bytesToAdd = 16 - (len(blockDataCompressed + blockDataBase) % 16)
 		blockDataCompressed += b'\x00'*bytesToAdd
 		header_info.additional_bytes += bytesToAdd
@@ -189,7 +202,7 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 		print(f"compressedSize: {len(blockDataCompressed)}")
 		print(f"Final block size: {header_info.size}\n")
 
-	return blockDataBase + blockDataCompressed
+	return b''.join([blockDataBase, blockDataCompressed])
 
 def debugWriteListToFile(name, list):
 	file = open(name, "w")
@@ -251,13 +264,10 @@ def writeKVStructure(obj, header, inArray, optimizeDict=False, optimizeDouble=Fa
 				optimizeInt = True
 			elif isinstance(val, str):
 				optimizeString = True
-			# TODO does this get reset when we have something between the dicts? My assumption is no, but should check anyways
 	elif type(obj) is str:
 		stringID = len(header.strings) # we will be adding 1 if we're adding a string so this will actually point at the last element.
-		# TODO When is the type STRING or STRING_MULTI? Since I don't know fully, I've left the same type in every if statement so it's easy to change once we find out.
 		if obj in header.strings:
 			stringID = header.strings.index(obj) # Reuse existing id
-			#types += KVTypes.STRING_MULTI.to_bytes(1)
 		elif len(obj) == 0:
 			stringID = -1
 		else:
