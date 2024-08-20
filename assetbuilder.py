@@ -446,7 +446,12 @@ def parseJsonStructure(file: str):
 		raise ValueError("JSON structure file " + str(e))
 
 if __name__ == "__main__":
-	parser = argparse.ArgumentParser(description="Tool to assemble Source 2 assets manually.")
+	example = '''example:
+	
+	%(prog)s -s pulse_schema.json -o output.vpulse_c
+	%(prog)s -p vrr -f vrr_redi.kv3 vrr_data.kv3 -o output.vrr_c'''
+	parser = argparse.ArgumentParser(description="Tool to assemble Source 2 assets manually.", epilog=example,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("-v", "--verbose", help="Enable verbose output", action="store_true")
 	file_struct_group = parser.add_mutually_exclusive_group(required=True)
 	file_struct_group.add_argument("-b", "--base",
@@ -464,6 +469,8 @@ if __name__ == "__main__":
 	parser.add_argument("-o", "--output",
 					 help="Output file name",
 					 type=str, metavar="<output file>", required=True)
+	
+	
 	args = parser.parse_args()
 	
 	if args.verbose:
