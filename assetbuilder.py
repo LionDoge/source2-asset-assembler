@@ -62,6 +62,7 @@ class KVBaseData:
 
 def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 	fileSize = 0 # 0
+	printDebug(f"version: {version}\nheader version: {headerVersion}\nblock count: {len(blocks)}\n")
 	headerVersion = headerVersion.to_bytes(2, 'little') # 4
 	version = version.to_bytes(2, 'little') # 6
 
@@ -81,6 +82,7 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 	currentOffset = 8 + ((len(blocks) - 1) * 12) + headerPadAmount
 	dataBlocks = []
 	for idx, block in enumerate(blocks):
+		printDebug(f"Processing block {idx+1} (name: {block.name} type: {block.type})")
 		if block.type == "kv3":
 			blockHeaderInfo = FileHeaderInfo()
 			blockUUID: UUID = block.data.format.version
@@ -93,7 +95,7 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 
 			combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), blockHeaderInfo.size.to_bytes(4, 'little')])
 			currentOffset += blockHeaderInfo.size + blockHeaderInfo.additional_bytes
-		if block.type == "text":
+		elif block.type == "text":
 			dataBlocks.append(block.data)
 			fileSize += len(block.data)
 			currentOffset += len(block.data)
@@ -105,6 +107,7 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 				   combinedBlockHeaderData, (b'\x00'*headerPadAmount)]) # HEADER DATA FOR BLOCKS + PADDING
 	for block in dataBlocks:
 		binData += block # DATA BLOCKS
+	printDebug(f"Final file size: {fileSize} bytes")
 	return binData
 
 KV3_FORMAT_GUID = b'\x7C\x16\x12\x74\xE9\x06\x98\x46\xAF\xF2\xE6\x3E\xB5\x90\x37\xE7'
@@ -112,9 +115,8 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 	headerData = KVBaseData()
 	kv3ver = b'\x04' # For now we only support version 4 of KV3
 	encodedGUID = guid
-	constantsAfterGUID = b'\x01\x00\x00\x00\x00\x00\x00\x40' # contains compressionMethod, compressionDictionaryID and compressionFrameSize. They're always the same for pulse.
+	constantsAfterGUID = b'\x01\x00\x00\x00\x00\x00\x00\x40' # contains compressionMethod, compressionDictionaryID and compressionFrameSize.
 	# The redefinitions here are written merely for the sake of readability.
-	# The RED section is likely going to be pretty much the same all the time.
 	headerData.countOfBinaryBytes = 0
 	headerData.countOfIntegers = 1 # All of the actual kv Data plus countOfStrings, which is always here, so we start from one.
 	headerData.countOfEightByteValues = 0
@@ -370,14 +372,17 @@ def getRequiredFilesForPreset(preset: str):
 		return 2
 	elif preset == "vrr":
 		return 2
+	elif preset == "cs2vanmgrph":
+		return 2
 	else:
 		raise ValueError("Unsupported preset: "+preset)
 	
-SUPPORTED_PRESETS = ["vpulse", "vrr"]
+SUPPORTED_PRESETS = ["vpulse", "vrr", "cs2vanmgrph"]
 def writeFileFromPreset(preset: str, files: list[str]):
 	if preset not in SUPPORTED_PRESETS:
 		raise ValueError("Unsupported preset: "+preset)
 	requiredFileCount = getRequiredFilesForPreset(preset)
+	# TODO: Move preset definitions to json files.
 	try:
 		if preset == "vpulse":
 			if files is None or len(files) != requiredFileCount:
@@ -390,6 +395,13 @@ def writeFileFromPreset(preset: str, files: list[str]):
 			if files is None or len(files) != requiredFileCount:
 				raise ValueError(f"Preset '{preset}' requires -f flag with {requiredFileCount} files.")
 			return writeFileData(9, 12, [
+				FileBlock(data=kv3.read(args.files[0]), type="kv3", name="RED2"),
+				FileBlock(data=kv3.read(args.files[1]), type="kv3", name="DATA")
+			])
+		elif preset == "cs2vanmgrph":
+			if files is None or len(files) != requiredFileCount:
+				raise ValueError(f"Preset '{preset}' requires -f flag with {requiredFileCount} files.")
+			return writeFileData(0, 12, [
 				FileBlock(data=kv3.read(args.files[0]), type="kv3", name="RED2"),
 				FileBlock(data=kv3.read(args.files[1]), type="kv3", name="DATA")
 			])
@@ -460,11 +472,13 @@ if __name__ == "__main__":
 	try:
 		if args.schema is not None: # we are using a schema JSON file
 			structure = parseJsonStructure(args.schema)
+			printDebug(f"Using schema file: {args.schema}")
 			binaryData = writeFileData(structure.version, structure.headerVersion, structure.blocks)
 		elif args.preset is not None:
 			if args.preset.lower() not in SUPPORTED_PRESETS:
 				print("Unsupported preset: "+args.preset)
 				sys.exit(1)
+			printDebug(f"Using preset: {args.preset}")
 			binaryData = writeFileFromPreset(args.preset, args.files)
 		elif args.base is not None:
 			raise NotImplementedError("Not implemented yet.")
@@ -473,6 +487,7 @@ if __name__ == "__main__":
 		sys.exit(1)
 	try:
 		with open(args.output, "wb") as f:
+			printDebug(f"Writing output file: {args.output}")
 			f.write(binaryData)
 	except Exception as e:
 		print("Failed to write output file: "+str(e))
