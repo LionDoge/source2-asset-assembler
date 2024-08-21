@@ -496,7 +496,7 @@ if __name__ == "__main__":
 								type=str, metavar="<json file>")
 	file_struct_group.add_argument("-p", "--preset",
 								help="Use a preset for the file structure, supported presets: " + ', '.join(SUPPORTED_PRESETS),
-								type=str, metavar="<redi file>")
+								type=str, metavar="<preset>")
 	parser.add_argument("-f", "--files", 
 					 help="List of files to use, only to be used with -b or -p, amount of files depends on the structure of the base file/preset that was specified",
 					 type=str, nargs="+", metavar="<file1> <file2> ...")
