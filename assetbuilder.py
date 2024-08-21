@@ -211,12 +211,47 @@ def debugWriteListToFile(name, list):
 		file.write(str(v)+"\n")
 	file.close()
 
+def getKVTypeFromInstance(obj, inArray: bool = False):
+	if type(obj) is list:
+		if(len(obj) > 0 and len(obj) < 256):
+			return KVTypes.ARRAY_TYPE_BYTE_LENGTH
+		elif(len(obj) > 0):
+			return KVTypes.ARRAY_TYPED
+		else: # len == 0
+			return KVTypes.ARRAY
+	elif type(obj) is dict:
+		return KVTypes.OBJECT
+	elif type(obj) is str:
+		return KVTypes.STRING
+	elif isinstance(obj, bool):
+		if obj == True:
+			return KVTypes.BOOLEAN_TRUE
+		else:
+			return KVTypes.BOOLEAN_FALSE
+	elif isinstance(obj, int):
+		if obj == 0 and inArray == False:
+			return KVTypes.INT64_ZERO
+		elif obj == 1 and inArray == False:
+			return KVTypes.INT64_ONE
+		else:
+			return KVTypes.INT32
+	elif isinstance(obj, float):
+		if obj == 0.0 and inArray == False:
+			return KVTypes.DOUBLE_ZERO
+		elif obj == 1.0 and inArray == False:
+			return KVTypes.DOUBLE_ONE
+		else:
+			return KVTypes.DOUBLE
+	elif obj is None:
+		return KVTypes.NULL
+
 def writeKVStructure(obj, header, inArray, lastArrayType: Optional[KVTypes] = None):
 	#global types, countOfIntegers, countOfEightByteValues, countOfStrings, binaryBytes, countOfBinaryBytes
 	data: list[bytes] = []
+	currentType = getKVTypeFromInstance(obj, inArray)
 	if type(obj) is dict:
-		if lastArrayType != KVTypes.OBJECT:
-			header.types += KVTypes.OBJECT.to_bytes(1)
+		if inArray == False:
+			header.types += currentType.to_bytes(1)
 		length: int = len(obj)
 		data += length.to_bytes(4, "little") # for dicts append length at start!
 		header.countOfIntegers+=1
@@ -235,31 +270,28 @@ def writeKVStructure(obj, header, inArray, lastArrayType: Optional[KVTypes] = No
 			data += writeKVStructure(value, header, False)
 	elif type(obj) is list:
 		# looks like if we have inside one array they get treated as one, thus we don't add another type to the list. We will use this value to detect that.
+		if inArray == False:
+			header.types += currentType.to_bytes(1)
 		if(len(obj) > 0 and len(obj) < 256):
-			header.types += KVTypes.ARRAY_TYPE_BYTE_LENGTH.to_bytes(1)
 			header.binaryBytes += len(obj).to_bytes(1)
 			header.countOfBinaryBytes += 1
-		elif(len(obj) > 0):
-			header.types += KVTypes.ARRAY_TYPED.to_bytes(1)
+		else: # length bigger than 1 byte
 			data += len(obj).to_bytes(4, "little")
 			header.countOfIntegers += 1
-		else: # len == 0
-			header.types += KVTypes.ARRAY.to_bytes(1)
-			data += len(obj).to_bytes(4, "little")
-			header.countOfIntegers += 1
+
+		# arrays have types, if we get the first element's type, then we know the type of the array.
+		if len(obj) > 0:
+			arrayType = getKVTypeFromInstance(obj[0], True)
+			#if arrayType != KVTypes.INT64_ZERO and arrayType != KVTypes.INT64_ONE and arrayType != KVTypes.DOUBLE_ZERO and arrayType != KVTypes.DOUBLE_ONE:
+			header.types += getKVTypeFromInstance(obj[0], True).to_bytes(1)
+
 		for val in obj:
 			# we set the last array type here as arrays that contain the same type only save their type ONCE.
 			# this is known to be done for a few types described below. Explicit types like DOUBLE_ZERO or INT64_ONE seem to be always repeated.
-			# we use this value to check if we should omit the appending of the type when writing the data.
+			# we add the types here, and note that we are inside an array, so we don't add the type again.
+			
 			data += writeKVStructure(val, header, True, lastArrayType=lastArrayType)
-			if type(val) is dict:
-				lastArrayType = KVTypes.OBJECT
-			elif isinstance(val, float):
-				lastArrayType = KVTypes.DOUBLE
-			elif isinstance(val, int):
-				lastArrayType = KVTypes.INT32
-			elif isinstance(val, str):
-				lastArrayType = KVTypes.STRING
+
 	elif type(obj) is str:
 		stringID = len(header.strings) # we will be adding 1 if we're adding a string so this will actually point at the last element.
 		if obj in header.strings:
@@ -270,38 +302,31 @@ def writeKVStructure(obj, header, inArray, lastArrayType: Optional[KVTypes] = No
 			header.strings.append(obj)
 			header.countOfStrings += 1
 		data += stringID.to_bytes(4, "little", signed=True)
-		if(lastArrayType != KVTypes.STRING):
-			header.types += KVTypes.STRING.to_bytes(1)
+		if inArray == False:
+			header.types += currentType.to_bytes(1)
 		header.countOfIntegers += 1
 	elif isinstance(obj, bool):
-		if obj == True:
-			header.types += KVTypes.BOOLEAN_TRUE.to_bytes(1)
-		else:
-			header.types += KVTypes.BOOLEAN_FALSE.to_bytes(1)
+		header.types += currentType.to_bytes(1)
 		# no additional data...
 	elif isinstance(obj, int):
 		# 1s and 0s don't get special types in arrays, trying to use them will confuse the game with array size.
-		if obj == 0 and inArray == False:
-			header.types += KVTypes.INT64_ZERO.to_bytes(1)
-		elif obj == 1 and inArray == False:
-			header.types += KVTypes.INT64_ONE.to_bytes(1)
+		if (obj == 0 or obj == 1) and inArray == False:
+			header.types += currentType.to_bytes(1)
 		else:
-			if lastArrayType != KVTypes.INT32:
-				header.types += KVTypes.INT32.to_bytes(1)
+			if inArray == False:
+				header.types += currentType.to_bytes(1)
 			data += obj.to_bytes(4, "little", signed=True if obj < 0 else False)
 			header.countOfIntegers += 1
 	elif isinstance(obj, float):
-		if obj == 0.0 and inArray == False:
-			header.types += KVTypes.DOUBLE_ZERO.to_bytes(1)
-		elif obj == 1.0 and inArray == False:
-			header.types += KVTypes.DOUBLE_ONE.to_bytes(1)
+		if (obj == 0.0 or obj == 1.0) and inArray == False:
+			header.types += currentType.to_bytes(1)
 		else:
-			if lastArrayType != KVTypes.DOUBLE:
-				header.types += KVTypes.DOUBLE.to_bytes(1)
+			if inArray == False:
+				header.types += currentType.to_bytes(1)
 			header.doubles.append(obj)
 			header.countOfEightByteValues += 1
 	elif obj is None:
-		header.types += KVTypes.NULL.to_bytes(1)
+		header.types += currentType.to_bytes(1)
 	else:
 		print("unhandled type detected: "+type(obj).__name__)
 	return data
