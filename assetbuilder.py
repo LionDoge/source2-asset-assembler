@@ -235,7 +235,13 @@ def getKVTypeFromInstance(obj, inArray: bool = False):
 		elif obj == 1 and inArray == False:
 			return KVTypes.INT64_ONE
 		else:
-			return KVTypes.INT32
+			# it seems not all values that are above or equal 0 are marked as unsigned in official assets.
+			# however in this case if we know that we can't fit a unsigned value into 32bit signed int, so we use uint32
+			# TODO: What about 64 bit values? Haven't found any assets that use them yet.
+			if obj <= 2147483647:
+				return KVTypes.INT32
+			else:
+				return KVTypes.UINT32
 	elif isinstance(obj, float):
 		if obj == 0.0 and inArray == False:
 			return KVTypes.DOUBLE_ZERO
