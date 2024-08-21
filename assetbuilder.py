@@ -211,6 +211,7 @@ def debugWriteListToFile(name, list):
 		file.write(str(v)+"\n")
 	file.close()
 
+# special types like DOUBLE_ZERO, INT64_ONE can't exist in arrays, so we use default types
 def getKVTypeFromInstance(obj, inArray: bool = False):
 	if type(obj) is list:
 		if(len(obj) > 0 and len(obj) < 256):
@@ -245,7 +246,7 @@ def getKVTypeFromInstance(obj, inArray: bool = False):
 	elif obj is None:
 		return KVTypes.NULL
 
-def writeKVStructure(obj, header, inArray, lastArrayType: Optional[KVTypes] = None):
+def writeKVStructure(obj, header, inArray, arraySubType: Optional[KVTypes] = None):
 	#global types, countOfIntegers, countOfEightByteValues, countOfStrings, binaryBytes, countOfBinaryBytes
 	data: list[bytes] = []
 	currentType = getKVTypeFromInstance(obj, inArray)
@@ -272,7 +273,7 @@ def writeKVStructure(obj, header, inArray, lastArrayType: Optional[KVTypes] = No
 		# looks like if we have inside one array they get treated as one, thus we don't add another type to the list. We will use this value to detect that.
 		if inArray == False:
 			header.types += currentType.to_bytes(1)
-		if(len(obj) > 0 and len(obj) < 256):
+		if(len(obj) > 0 and len(obj) < 256) and arraySubType != KVTypes.ARRAY: # special case if the internal arrays have been tagged as different type.
 			header.binaryBytes += len(obj).to_bytes(1)
 			header.countOfBinaryBytes += 1
 		else: # length bigger than 1 byte
@@ -281,16 +282,23 @@ def writeKVStructure(obj, header, inArray, lastArrayType: Optional[KVTypes] = No
 
 		# arrays have types, if we get the first element's type, then we know the type of the array.
 		if len(obj) > 0:
-			arrayType = getKVTypeFromInstance(obj[0], True)
-			#if arrayType != KVTypes.INT64_ZERO and arrayType != KVTypes.INT64_ONE and arrayType != KVTypes.DOUBLE_ZERO and arrayType != KVTypes.DOUBLE_ONE:
-			header.types += getKVTypeFromInstance(obj[0], True).to_bytes(1)
+			# if there's mixed "optimized" types in the array then we use the least specific one.
+			# eg. we know that arrays of 0 length get the ARRAY type and ARRAY_TYPE_BYTE_LENGTH type is used for arrays with 1-255 elements.
+			# if there's at least one empty array, then we assume every element as ARRAY type.
+			# TODO, it appears that types such as INT64_ONE and similar sometimes also get saved in the array, but not always. When is that the case?
+			currType = None
+			for val in obj:
+				currType = getKVTypeFromInstance(val, True)
+				if currType == KVTypes.ARRAY:
+					break
+			header.types += currType.to_bytes(1)
 
 		for val in obj:
 			# we set the last array type here as arrays that contain the same type only save their type ONCE.
 			# this is known to be done for a few types described below. Explicit types like DOUBLE_ZERO or INT64_ONE seem to be always repeated.
 			# we add the types here, and note that we are inside an array, so we don't add the type again.
 			
-			data += writeKVStructure(val, header, True, lastArrayType=lastArrayType)
+			data += writeKVStructure(val, header, True, arraySubType = currType)
 
 	elif type(obj) is str:
 		stringID = len(header.strings) # we will be adding 1 if we're adding a string so this will actually point at the last element.
@@ -313,7 +321,7 @@ def writeKVStructure(obj, header, inArray, lastArrayType: Optional[KVTypes] = No
 		if (obj == 0 or obj == 1) and inArray == False:
 			header.types += currentType.to_bytes(1)
 		else:
-			if inArray == False:
+			if inArray == False or arraySubType == KVTypes.ARRAY:
 				header.types += currentType.to_bytes(1)
 			data += obj.to_bytes(4, "little", signed=True if obj < 0 else False)
 			header.countOfIntegers += 1
@@ -321,7 +329,7 @@ def writeKVStructure(obj, header, inArray, lastArrayType: Optional[KVTypes] = No
 		if (obj == 0.0 or obj == 1.0) and inArray == False:
 			header.types += currentType.to_bytes(1)
 		else:
-			if inArray == False:
+			if inArray == False or arraySubType == KVTypes.ARRAY:
 				header.types += currentType.to_bytes(1)
 			header.doubles.append(obj)
 			header.countOfEightByteValues += 1
