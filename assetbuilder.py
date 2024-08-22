@@ -488,8 +488,8 @@ def parseJsonStructure(file: str):
 				if block['type'] == "kv3":
 					fileData = kv3.read(fullPath)
 				elif block['type'] == "text":
-					with open(fullPath, "r") as f:
-						fileData = bytes(f.read(), 'ascii')
+					with open(fullPath, "r", encoding="utf-8") as f:
+						fileData = bytes(f.read(), 'utf-8')
 				blocks.append(FileBlock(data=fileData, type=block['type'], name=block['name']))
 				currentBlock += 1
 			return JsonStructureInfo(version, headerVersion, blocks)
