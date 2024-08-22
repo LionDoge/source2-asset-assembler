@@ -1,2 +1,4 @@
 keyvalues3==0.1
 lz4==4.3.3
+parsimonious==0.10.0
+regex==2024.7.24

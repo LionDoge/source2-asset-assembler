@@ -89,6 +89,7 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 		alignEnd = True
 		if idx == len(blocks)-1:
 			alignEnd = False
+		
 		if block.type == "kv3":
 			blockHeaderInfo = FileHeaderInfo()
 			blockUUID: UUID = block.data.format.version
@@ -312,7 +313,7 @@ def writeKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVTypes] 
 			# if there's mixed "optimized" types in the array then we use the least specific one.
 			# eg. we know that arrays of 0 length get the ARRAY type and ARRAY_TYPE_BYTE_LENGTH type is used for arrays with 1-255 elements.
 			# if there's at least one empty array, then we assume every element as ARRAY type.
-			# TODO, it appears that types such as INT64_ONE and similar sometimes also get saved in the array, but not always. When is that the case?
+
 			subType = None
 			for val in obj:
 				subType = getKVTypeFromInstance(val, True)
@@ -323,8 +324,9 @@ def writeKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVTypes] 
 
 		for val in obj:
 			# we set the last array type here as arrays that contain the same type only save their type ONCE.
-			# this is known to be done for a few types described below. Explicit types like DOUBLE_ZERO or INT64_ONE seem to be always repeated.
-			# we add the types here, and note that we are inside an array, so we don't add the type again.
+			# this is known to be done for a few types described below. Explicit types like DOUBLE_ZERO or INT64_ONE
+			# seem to be only saved in non-typed arrays for each element.
+			# if we're not in a typed array we add the types right before and note that we are inside an array, so we don't add the type again.
 			
 			data += writeKVStructure(val, header, arraySubType != KVTypes.ARRAY, arraySubType = subType)
 
@@ -431,7 +433,8 @@ def getRequiredFilesForPreset(preset: str):
 		return 2
 	else:
 		raise ValueError("Unsupported preset: "+preset)
-	
+
+# This section should probably be redone and reuse pre-defined JSONs as templates.
 SUPPORTED_PRESETS = ["vpulse", "vrr", "cs2vanmgrph"]
 def writeFileFromPreset(preset: str, files: list[str]):
 	if preset not in SUPPORTED_PRESETS:
