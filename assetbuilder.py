@@ -485,7 +485,6 @@ def parseJsonStructure(file: str):
 				fileData = None
 				# search relative to the JSON file
 				fullPath = (Path(file).parents[0] / Path(block['file'])).resolve()
-				print(fullPath)
 				if block['type'] == "kv3":
 					fileData = kv3.read(fullPath)
 				elif block['type'] == "text":
