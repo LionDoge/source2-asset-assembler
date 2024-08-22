@@ -7,12 +7,12 @@
         {
             "type": "kv3",
             "name": "RED2",
-            "file": "examples/eventhandler_redi.kv3"
+            "file": "eventhandler_redi.kv3"
         },
         {
             "type": "kv3",
             "name": "DATA",
-            "file": "examples/eventhandler.kv3"
+            "file": "eventhandler.kv3"
         }
     ]
 }
