@@ -1,0 +1,23 @@
+{
+    "info": {
+        "headerversion": 12,
+        "version": 2
+    },
+    "blocks": [
+        {
+            "type": "kv3",
+            "name": "RED2",
+            "file": "sourcets_redi.kv3"
+        },
+        {
+            "type": "text",
+            "name": "DATA",
+            "file": "sourcets.vts"
+        },
+        {
+            "type": "kv3",
+            "name": "STAT",
+            "file": "sourcets_stat.kv3"
+        }
+    ]
+}

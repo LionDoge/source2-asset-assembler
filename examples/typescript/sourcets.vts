@@ -1,0 +1,27 @@
+import { Instance } from "serverpointentity";
+
+Instance.InitialActivate(() => {
+    Instance.Msg("hello there!");
+    Instance.Msg(Instance.DebugScreenText.toString())
+    Instance.DebugScreenText("Test text hi there!", 1500.0, 10.0, 40, 100.0, "#ff0000");
+});
+
+const printObj = function(_obj)
+{
+    let result = [];
+    let obj = _obj;
+    do {
+        result.push(...Object.getOwnPropertyNames(obj));
+    } while (obj = Object.getPrototypeOf(obj));
+    Instance.Msg(result);
+}
+
+Instance.PublicMethod("printInfo", function() {
+    Instance.msg("printInfo called");
+    Instance.Msg(Instance.__proto__);
+    let pawn = Instance.GetPlayerPawn(0);
+    let controller = pawn.GetCurrentController();
+    printObj(controller);
+    let wep = pawn.GetActiveWeapon();
+    printObj(wep);
+});
