@@ -8,6 +8,7 @@ from typing import Optional
 from uuid import UUID
 import argparse
 import json
+from pathlib import Path
 
 class KVTypes(IntEnum):
 	STRING_MULTI = 0,
@@ -73,9 +74,11 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 	blockCount = blockCount.to_bytes(4, 'little') # 16
 
 	combinedBlockHeaderData = b''
-	fileSize += (16 + 12*len(blocks)) # 16 is the size of the header, 12 is the size of each block header (name, offset, size)
-	headerPadAmount = -fileSize % 16
-	fileSize += headerPadAmount # the data is also padded with 0s to align to 16 bytes.
+	assetHeaderSize = (16 + 12*len(blocks)) # 16 is the size of the header, 12 is the size of each block header (name, offset, size)
+	headerPadAmount = -assetHeaderSize % 16
+	assetHeaderSize += headerPadAmount # the data is also padded with 0s to align to 16 bytes.
+
+	fileSize = assetHeaderSize
 
 	# the offsets are relative to where they are placed in the file, we should know the first one's value, since the first block of data is right after the header.
 	# first offset: 8 is the offset to another block info, every block info is 12 bytes long.
@@ -83,24 +86,31 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 	dataBlocks = []
 	for idx, block in enumerate(blocks):
 		printDebug(f"Processing block {idx+1} (name: {block.name} type: {block.type})")
+		alignEnd = True
+		if idx == len(blocks)-1:
+			alignEnd = False
 		if block.type == "kv3":
 			blockHeaderInfo = FileHeaderInfo()
 			blockUUID: UUID = block.data.format.version
-			alignEnd = True
-			if idx == len(blocks)-1:
-				alignEnd = False
-			blockKVData = writeKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, alignEnd=alignEnd, visualName=block.name)
+			
+			blockKVData = writeKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo,
+								alignEnd=alignEnd, currentFileSize=fileSize, visualName=block.name)
+			
 			dataBlocks.append(blockKVData)
 			fileSize += blockHeaderInfo.size + blockHeaderInfo.additional_bytes
 
 			combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), blockHeaderInfo.size.to_bytes(4, 'little')])
 			currentOffset += blockHeaderInfo.size + blockHeaderInfo.additional_bytes
 		elif block.type == "text":
-			dataBlocks.append(block.data)
-			fileSize += len(block.data)
-			currentOffset += len(block.data)
-			printDebug(f"Stats for {block.name} block (UUID: {str(UUID(bytes_le=blockUUID))}):")
-			printDebug(f"Text size: {len(block.data)}\n")
+			blockHeaderInfo = FileHeaderInfo()
+			textData = writeTextBlock(block.data, blockHeaderInfo,
+								alignEnd=alignEnd, currentFileSize=fileSize, visualName=block.name)
+			dataBlocks.append(textData)
+
+			fileSize += blockHeaderInfo.size + blockHeaderInfo.additional_bytes
+			combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), blockHeaderInfo.size.to_bytes(4, 'little')])
+			currentOffset += blockHeaderInfo.size + blockHeaderInfo.additional_bytes
+			
 		currentOffset -= 12 # -12 because we need to account for where the next offset value is placed.
 	
 	binData = b''.join([fileSize.to_bytes(4, 'little'), headerVersion, version, blockOffset, blockCount, # FILE HEADER (16 bytes)
@@ -111,7 +121,18 @@ def writeFileData(version: int, headerVersion: int, blocks: list[FileBlock]):
 	return binData
 
 KV3_FORMAT_GUID = b'\x7C\x16\x12\x74\xE9\x06\x98\x46\xAF\xF2\xE6\x3E\xB5\x90\x37\xE7'
-def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str = "unnamed block"):
+
+def writeTextBlock(textData, textHeaderInfo, alignEnd=False, currentFileSize: int = 0, visualName: str = "unnamed block"):
+	textHeaderInfo.size = len(textData)
+	if alignEnd == True:
+		bytesToAdd = (-(len(textData) + currentFileSize)) % 16
+		textData += b'\x00'*bytesToAdd
+		textHeaderInfo.additional_bytes += bytesToAdd
+	printDebug(f"Stats for {visualName} block")
+	printDebug(f"Text size: {textHeaderInfo.size}\n")
+	return textData
+
+def writeKVBlock(block_data, guid, header_info, alignEnd=False, currentFileSize: int = 0, visualName: str = "unnamed block"):
 	headerData = KVBaseData()
 	kv3ver = b'\x04' # For now we only support version 4 of KV3
 	encodedGUID = guid
@@ -187,7 +208,7 @@ def writeKVBlock(block_data, guid, header_info, alignEnd=False, visualName: str 
 	if alignEnd == True:
 		# ! Assumption from what I observed: All blocks after another start aligned to 16 bytes, 
 		# ! so if we don't have enough bytes for a full line at the end in hex editor then append 0s and only then start the next block. 
-		bytesToAdd = 16 - (len(blockDataCompressed + blockDataBase) % 16)
+		bytesToAdd = (-(len(blockDataCompressed + blockDataBase) + currentFileSize)) % 16
 		blockDataCompressed += b'\x00'*bytesToAdd
 		header_info.additional_bytes += bytesToAdd
 
@@ -462,10 +483,13 @@ def parseJsonStructure(file: str):
 				block['name'] = block['name'].upper()
 				block['type'] = block['type'].lower()
 				fileData = None
+				# search relative to the JSON file
+				fullPath = (Path(file).parents[0] / Path(block['file'])).resolve()
+				print(fullPath)
 				if block['type'] == "kv3":
-					fileData = kv3.read(block['file'])
+					fileData = kv3.read(fullPath)
 				elif block['type'] == "text":
-					with open(block['file'], "r") as f:
+					with open(fullPath, "r") as f:
 						fileData = bytes(f.read(), 'ascii')
 				blocks.append(FileBlock(data=fileData, type=block['type'], name=block['name']))
 				currentBlock += 1
