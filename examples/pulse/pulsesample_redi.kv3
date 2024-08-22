@@ -2,9 +2,8 @@
 {
 	m_InputDependencies = 
 	[
-		
 		{
-			m_RelativeFilename = "pulse/eventhandler.vpulse"
+			m_RelativeFilename = "pulse/test.vpulse"
 			m_SearchPath = "csgo"
 			m_nFileCRC = 0
 			m_bOptional = false
