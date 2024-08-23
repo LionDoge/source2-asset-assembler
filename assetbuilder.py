@@ -42,7 +42,6 @@ class KVType(IntEnum):
 class FileHeaderInfo:
 	size: int = 0
 	offset: int = 0
-	additional_bytes: int = 0
 
 @dataclass
 class FileBlock:
@@ -102,15 +101,17 @@ def buildFileData(version: int, headerVersion: int, blocks: list[FileBlock]) -> 
 			blockData = buildTextBlock(block.data, blockHeaderInfo, visualName=block.name)
 
 		# fill with 0 bytes to align to 16 bytes
-		if idx == len(blocks)-1:
+		additionalOffset = 0
+		if idx != len(blocks)-1:
 			alignBytes = alignToBytes(16, fileSize + blockHeaderInfo.size)
 			blockData += alignBytes[0]
 			fileSize += alignBytes[1]
+			additionalOffset = alignBytes[1]
 		fileSize += blockHeaderInfo.size
 		dataBlocks.append(blockData)
 
 		combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), blockHeaderInfo.size.to_bytes(4, 'little')])
-		currentOffset += blockHeaderInfo.size + blockHeaderInfo.additional_bytes
+		currentOffset += blockHeaderInfo.size + additionalOffset
 		currentOffset -= 12 # -12 because we need to account for where the next offset value is placed.
 	
 	binData = b''.join([fileSize.to_bytes(4, 'little'), headerVersion, version, blockOffset, blockCount, # FILE HEADER (16 bytes)
