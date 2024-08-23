@@ -490,9 +490,6 @@ if __name__ == "__main__":
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("-v", "--verbose", help="Enable verbose output", action="store_true")
 	file_struct_group = parser.add_mutually_exclusive_group(required=True)
-	file_struct_group.add_argument("-b", "--base",
-								help="Use a compiled file as a base for the stucture of the file to compile",
-								type=str, metavar="<compiled asset file>")
 	file_struct_group.add_argument("-s", "--schema",
 								help="Use a JSON file with the definition of the file structure to compile (see README for an example)",
 								type=str, metavar="<json file>")
@@ -521,8 +518,6 @@ if __name__ == "__main__":
 				sys.exit(1)
 			printDebug(f"Using preset: {args.preset}")
 			binaryData = buildAssetFromPreset(args.preset, args.files)
-		elif args.base is not None:
-			raise NotImplementedError("Not implemented yet.")
 	except (FileNotFoundError, ValueError) as e: # let's not handle json and kv3 errors, it might be useful to get a full call stack.
 		print(str(e))
 		sys.exit(1)
