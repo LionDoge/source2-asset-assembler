@@ -483,7 +483,6 @@ def parseJsonStructure(file: str):
 			blocks = []
 			currentBlock = 1 # for error messages
 			for block in data['blocks']:
-				block['name'] = block['name'].upper()
 				block['type'] = block['type'].lower()
 				fileData = None
 				# search relative to the JSON file
