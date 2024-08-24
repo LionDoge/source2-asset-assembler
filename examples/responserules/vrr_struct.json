@@ -1,0 +1,18 @@
+{
+    "info": {
+        "headerversion": 12,
+        "version": 9
+    },
+    "blocks": [
+        {
+            "type": "kv3",
+            "name": "RED2",
+            "file": "RED2_responserule.kv3"
+        },
+        {
+            "type": "kv3",
+            "name": "DATA",
+            "file": "responserule.kv3"
+        }
+    ]
+}
