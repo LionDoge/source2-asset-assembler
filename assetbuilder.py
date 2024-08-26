@@ -478,7 +478,7 @@ def buildAssetFromPreset(preset: str, files: list[str]) -> bytes:
 		raise FileNotFoundError(f"One of the specified files doesn't exist: {e}")
 
 def getTypeFromMagic(magic: bytes) -> str:
-	if magic == b'\x043VK':
+	if magic == 1263940356 or magic == 1263940355:
 		return "kv3"
 	else: # we don't support other types, so assuming here...
 		return "text"
@@ -496,12 +496,12 @@ def readAssetFile(file: Path | str) -> AssetInfo:
 			for i in range(blockCount):
 				blockName = f.read(4).decode('ascii')
 				blockOffset = struct.unpack("<I", f.read(4))[0]
-				#blockSize = struct.unpack("<I", f.read(4))[0]
 				currentOffset = f.tell()
 				f.seek(blockOffset - 4, os.SEEK_CUR)
 				blockType = getTypeFromMagic(struct.unpack("<I", f.read(4))[0])
 				f.seek(currentOffset, os.SEEK_SET)
 				assetInfo.blocks.append(FileBlock(data=None, type=blockType, name=blockName))
+				blockSize = struct.unpack("<I", f.read(4))[0]
 		return assetInfo
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"Failed to open file: {e}")
@@ -558,6 +558,12 @@ if __name__ == "__main__":
 				print("--base argument requires a compiled asset file.")
 				sys.exit(1)
 			assetInfo = readAssetFile(args.base)
+			if(args.files is None or len(args.files) < len(assetInfo.blocks)):
+				print(f"This asset type requires the -f argument with {len(assetInfo.blocks)} input files.")
+				sys.exit(1)
+			for idx, block in enumerate(assetInfo.blocks):
+				fullPath = Path(args.files[idx]).resolve()
+				block.data = readBytesFromFile(fullPath, block.type)
 			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
 		else:
 			print("One of the following flags is required to compile an asset: -s, -p, -b. Use -h for help.")
