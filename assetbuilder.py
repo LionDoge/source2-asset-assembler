@@ -9,6 +9,7 @@ from uuid import UUID
 import argparse
 import keyvalues3 as kv3
 import lz4.block
+import os
 from copy import deepcopy
 
 class KVType(IntEnum):
@@ -477,6 +478,37 @@ def buildAssetFromPreset(preset: str, files: list[str]) -> bytes:
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"One of the specified files doesn't exist: {e}")
 
+def getTypeFromMagic(magic: bytes) -> str:
+	if magic == 1263940356 or magic == 1263940355:
+		return "kv3"
+	else: # we don't support other types, so assuming here...
+		return "text"
+
+def readAssetFile(file: Path | str) -> AssetInfo:
+	try:
+		assetInfo: AssetInfo = AssetInfo(0, 0, [])
+		with open(file, "rb") as f:
+			fileSize = struct.unpack("<I", f.read(4))[0]
+			assetInfo.headerVersion = struct.unpack("<H", f.read(2))[0]
+			assetInfo.version = struct.unpack("<H", f.read(2))[0]
+			blockOffset = struct.unpack("<I", f.read(4))[0]
+			blockCount = struct.unpack("<I", f.read(4))[0]
+			f.seek(8 + blockOffset, os.SEEK_SET)
+			for i in range(blockCount):
+				blockName = f.read(4).decode('ascii')
+				blockOffset = struct.unpack("<I", f.read(4))[0]
+				currentOffset = f.tell()
+				f.seek(blockOffset - 4, os.SEEK_CUR)
+				blockType = getTypeFromMagic(struct.unpack("<I", f.read(4))[0])
+				f.seek(currentOffset, os.SEEK_SET)
+				assetInfo.blocks.append(FileBlock(data=None, type=blockType, name=blockName))
+				blockSize = struct.unpack("<I", f.read(4))[0]
+		return assetInfo
+	except FileNotFoundError as e:
+		raise FileNotFoundError(f"Failed to open file: {e}")
+	except struct.error as e:
+		raise ValueError(f"Failed to read file: {e} Is the file a valid asset?")
+
 g_isVerbose = False
 def printDebug(msg):
 	if g_isVerbose:
@@ -491,6 +523,9 @@ if __name__ == "__main__":
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("-v", "--verbose", help="Enable verbose output", action="store_true")
 	file_struct_group = parser.add_mutually_exclusive_group(required=True)
+	file_struct_group.add_argument("-b", "--base",
+								help="Use a compiled file as a base for the stucture of the file to compile",
+								type=str, metavar="<compiled asset file>")
 	file_struct_group.add_argument("-s", "--schema",
 								help="Use a JSON file with the definition of the file structure to compile (see README for an example)",
 								type=str, metavar="<json file>")
@@ -519,6 +554,21 @@ if __name__ == "__main__":
 				sys.exit(1)
 			printDebug(f"Using preset: {args.preset}")
 			binaryData = buildAssetFromPreset(args.preset, args.files)
+		elif args.base is not None:
+			if(args.base.endswith("_c") == False): # a very basic check, but should weed out most bad attempts.
+				print("--base argument requires a compiled asset file.")
+				sys.exit(1)
+			assetInfo = readAssetFile(args.base)
+			if(args.files is None or len(args.files) < len(assetInfo.blocks)):
+				print(f"This asset type requires the -f argument with {len(assetInfo.blocks)} input files.")
+				sys.exit(1)
+			for idx, block in enumerate(assetInfo.blocks):
+				fullPath = Path(args.files[idx]).resolve()
+				block.data = readBytesFromFile(fullPath, block.type)
+			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
+		else:
+			print("One of the following flags is required to compile an asset: -s, -p, -b. Use -h for help.")
+			sys.exit(0)
 	except (FileNotFoundError, ValueError) as e: # let's not handle json and kv3 errors, it might be useful to get a full call stack.
 		print(str(e))
 		sys.exit(1)
