@@ -43,6 +43,7 @@ class KVType(IntEnum):
 class FileHeaderInfo:
 	size: int = 0
 	offset: int = 0
+	additional_bytes: int = 0
 
 @dataclass
 class FileBlock:
