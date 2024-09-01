@@ -144,7 +144,8 @@ def buildKVBlock(block_data, guid, header_info, visualName: str = "unnamed block
 	headerData.compressedSize = 0 # compressed kv3 block size
 	blockCount: int = 0 # always the same
 	blockTotalSize: int = 0 # always the same
-	unknowns = b'\x00' * 8 # Appears to always be the same - can ignore.
+	countOfTwoByteValues: int = 0 # we don't use 16 bit values when building. Is this necessary for some assets to work?
+	unknown: int = 0 # can ignore for now.
 	# after all this we finally have actual kv data...
 
 	# ------ DATA LATER IS LZ4 COMPRESSED! -------
@@ -191,7 +192,7 @@ def buildKVBlock(block_data, guid, header_info, visualName: str = "unnamed block
 							headerData.stringAndTypesBufferSize.to_bytes(4, "little"),
 						   	preallocValues, uncompressedSize, compressedSize, 
 							blockCount.to_bytes(4, "little"), blockTotalSize.to_bytes(4, "little"), 
-							unknowns])
+							countOfTwoByteValues.to_bytes(4, "little"), unknown.to_bytes(4, "little")])
 
 	header_info.size = len(blockDataBase + blockDataCompressed)
 	if g_isVerbose:
