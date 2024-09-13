@@ -43,11 +43,11 @@ class KVType(IntEnum):
 class FileHeaderInfo:
 	size: int = 0
 	offset: int = 0
-	additional_bytes: int = 0
 
 @dataclass
 class FileBlock:
 	data: any
+	dataProcessed: bool
 	type: str
 	name: str
 
@@ -93,25 +93,39 @@ def buildFileData(version: int, headerVersion: int, blocks: list[FileBlock]) -> 
 	dataBlocks = []
 	for idx, block in enumerate(blocks):
 		printDebug(f"Processing block {idx+1} (name: {block.name} type: {block.type})")
-
-		blockHeaderInfo = FileHeaderInfo()
 		blockData: bytes = b''
-		if block.type == "kv3":
-			blockUUID: UUID = block.data.format.version
-			blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, visualName=block.name)
-		elif block.type == "text":
-			blockData = buildTextBlock(block.data, blockHeaderInfo, visualName=block.name)
+		dataSize = 0
+		usingExistingData = True
+		blockHeaderInfo = FileHeaderInfo()
+		if block.dataProcessed == False:
+			usingExistingData = False
+			if block.type == "kv3":
+				blockUUID: UUID = block.data.format.version
+				blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, visualName=block.name)
+			elif block.type == "text":
+				blockData = buildTextBlock(block.data, blockHeaderInfo, visualName=block.name)
+			else:
+				usingExistingData = True
+				blockData = block.data
+			block.dataProcessed = True
+		else:
+			blockData = block.data
 
+		if usingExistingData == False:
+			dataSize = blockHeaderInfo.size
+		else:
+			dataSize = len(blockData)
 		# fill with 0 bytes to align to 16 bytes
-		if idx == len(blocks)-1:
-			alignBytes = alignToBytes(16, fileSize + blockHeaderInfo.size)
+		if idx != len(blocks)-1:
+			alignBytes = alignToBytes(16, fileSize + dataSize)
 			blockData += alignBytes[0]
 			fileSize += alignBytes[1]
-		fileSize += blockHeaderInfo.size
+			additionalOffset = alignBytes[1]
+		fileSize += dataSize
 		dataBlocks.append(blockData)
 
-		combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), blockHeaderInfo.size.to_bytes(4, 'little')])
-		currentOffset += blockHeaderInfo.size + blockHeaderInfo.additional_bytes
+		combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), dataSize.to_bytes(4, 'little')])
+		currentOffset += dataSize + additionalOffset
 		currentOffset -= 12 # -12 because we need to account for where the next offset value is placed.
 	
 	binData = b''.join([fileSize.to_bytes(4, 'little'), headerVersion, version, blockOffset, blockCount, # FILE HEADER (16 bytes)
@@ -433,7 +447,7 @@ def parseJsonStructure(file: str):
 				# search relative to the JSON file
 				fullPath = (Path(file).parents[0] / Path(block['file'])).resolve()
 				fileData = readBytesFromFile(fullPath, block['type'])
-				blocks.append(FileBlock(data=fileData, type=block['type'], name=block['name']))
+				blocks.append(FileBlock(data=fileData, type=block['type'], name=block['name'], dataProcessed=False))
 				currentBlock += 1
 			return AssetInfo(version, headerVersion, blocks)
 	except FileNotFoundError as e:
@@ -447,16 +461,16 @@ def parseJsonStructure(file: str):
 
 assetPresetInfo = {
 	"vpulse": AssetInfo(version=0, headerVersion=12, blocks=[
-		FileBlock(type="kv3", name="RED2", data=None),
-		FileBlock(type="kv3", name="DATA", data=None)
+		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
+		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
 	]),
 	"vrr": AssetInfo(version=9, headerVersion=12, blocks=[
-		FileBlock(type="kv3", name="RED2", data=None),
-		FileBlock(type="kv3", name="DATA", data=None)
+		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
+		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
 	]),
 	"cs2vanmgrph": AssetInfo(version=0, headerVersion=12, blocks=[
-		FileBlock(type="kv3", name="RED2", data=None),
-		FileBlock(type="kv3", name="DATA", data=None)
+		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
+		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
 	]),
 }
 # This section should probably be redone and reuse pre-defined JSONs as templates.
@@ -476,14 +490,24 @@ def buildAssetFromPreset(preset: str, files: list[str]) -> bytes:
 		raise
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"One of the specified files doesn't exist: {e}")
+	
+def editAssetFile(file: Path | str, replacementData: list[FileBlock]) -> AssetInfo:
+	try:
+		assetInfo = readAssetFile(file, True)
+		for idx, block in enumerate(assetInfo.blocks):
+			if block.name == replacementData[idx].name:
+				block.data = replacementData[idx].data
+		return assetInfo
+	except FileNotFoundError as e:
+		raise FileNotFoundError(f"Failed to open file: {e}")
 
 def getTypeFromMagic(magic: bytes) -> str:
-	if magic == b'\x043VK':
+	if magic == 1263940356:
 		return "kv3"
 	else: # we don't support other types, so assuming here...
 		return "text"
 
-def readAssetFile(file: Path | str) -> AssetInfo:
+def readAssetFile(file: Path | str, includeData: bool = False) -> AssetInfo:
 	try:
 		assetInfo: AssetInfo = AssetInfo(0, 0, [])
 		with open(file, "rb") as f:
@@ -496,17 +520,24 @@ def readAssetFile(file: Path | str) -> AssetInfo:
 			for i in range(blockCount):
 				blockName = f.read(4).decode('ascii')
 				blockOffset = struct.unpack("<I", f.read(4))[0]
-				#blockSize = struct.unpack("<I", f.read(4))[0]
+				blockSize = struct.unpack("<I", f.read(4))[0]
 				currentOffset = f.tell()
-				f.seek(blockOffset - 4, os.SEEK_CUR)
+				f.seek(blockOffset - 8, os.SEEK_CUR)
+
 				blockType = getTypeFromMagic(struct.unpack("<I", f.read(4))[0])
+				f.seek(-4, os.SEEK_CUR)
+				blockData = None
+				dataProcessed = False
+				if includeData:
+					dataProcessed = True
+					blockData = f.read(blockSize)
 				f.seek(currentOffset, os.SEEK_SET)
-				assetInfo.blocks.append(FileBlock(data=None, type=blockType, name=blockName))
+				assetInfo.blocks.append(FileBlock(data=blockData, type=blockType, name=blockName, dataProcessed=dataProcessed))
 		return assetInfo
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"Failed to open file: {e}")
 	except struct.error as e:
-		raise ValueError(f"Failed to read file: {e} Is the file a valid asset?")
+		raise ValueError(f"Failed to deserialize file: {e} it might not be a valid asset.")
 
 g_isVerbose = False
 def printDebug(msg):
@@ -521,16 +552,19 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Tool to assemble Source 2 assets manually.", epilog=example,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("-v", "--verbose", help="Enable verbose output", action="store_true")
-	file_struct_group = parser.add_mutually_exclusive_group(required=True)
-	file_struct_group.add_argument("-b", "--base",
+	input_group = parser.add_mutually_exclusive_group(required=True)
+	input_group.add_argument("-b", "--base",
 								help="Use a compiled file as a base for the stucture of the file to compile",
 								type=str, metavar="<compiled asset file>")
-	file_struct_group.add_argument("-s", "--schema",
+	input_group.add_argument("-s", "--schema",
 								help="Use a JSON file with the definition of the file structure to compile (see README for an example)",
 								type=str, metavar="<json file>")
-	file_struct_group.add_argument("-p", "--preset",
+	input_group.add_argument("-p", "--preset",
 								help="Use a preset for the file structure, supported presets: " + ', '.join(list(assetPresetInfo.keys())),
 								type=str, metavar="<preset>")
+	input_group.add_argument("-e", "--edit", 
+								help="Edit an existing asset file, requires -f flag with the same amount of files as the base file.",
+								type=str, nargs="+", metavar="<compiled asset file> <BLOCK1> <BLOCK2> ...")
 	parser.add_argument("-f", "--files", 
 					 help="List of files to use, only to be used with -b or -p, amount of files depends on the structure of the base file/preset that was specified",
 					 type=str, nargs="+", metavar="<file1> <file2> ...")
@@ -554,16 +588,35 @@ if __name__ == "__main__":
 			printDebug(f"Using preset: {args.preset}")
 			binaryData = buildAssetFromPreset(args.preset, args.files)
 		elif args.base is not None:
-			if(args.base.endswith("_c") == False): # a very basic check, but should weed out most bad attempts.
+			if(args.base.endswith("_c") == False):
 				print("--base argument requires a compiled asset file.")
 				sys.exit(1)
 			assetInfo = readAssetFile(args.base)
 			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
+		elif args.edit is not None:
+			if(args.edit[0].endswith("_c") == False):
+				print("--edit argument requires a compiled asset file.")
+				sys.exit(1)
+			assetInfo: AssetInfo = readAssetFile(args.edit[0], True)
+			maxBlocks: int = len(args.edit) - 1
+			for idx, file in enumerate(args.files):
+				currBlock: int = args.edit[idx+1]
+				blockIdx: int = -1
+				for currIdx, block in enumerate(assetInfo.blocks):
+					if block.name == currBlock:
+						blockIdx = currIdx
+						break
+				else:
+					raise ValueError(f"Block {currBlock} not found in the input file.")
+				fullPath = Path(file).resolve()
+				assetInfo.blocks[blockIdx].data = readBytesFromFile(fullPath, assetInfo.blocks[blockIdx].type)
+				assetInfo.blocks[blockIdx].dataProcessed = False # we need to reprocess the data.
+			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
 		else:
-			print("One of the following flags is required to compile an asset: -s, -p, -b. Use -h for help.")
+			print("One of the following flags is required to compile an asset: -s, -p, -b, -e Use -h for help.")
 			sys.exit(0)
 	except (FileNotFoundError, ValueError) as e: # let's not handle json and kv3 errors, it might be useful to get a full call stack.
-		print(str(e))
+		print("ERROR: " + str(e) + ". Asset was not processed.")
 		sys.exit(1)
 	try:
 		with open(args.output, "wb") as f:
