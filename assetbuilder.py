@@ -116,6 +116,7 @@ def buildFileData(version: int, headerVersion: int, blocks: list[FileBlock]) -> 
 		else:
 			dataSize = len(blockData)
 		# fill with 0 bytes to align to 16 bytes
+		additionalOffset = 0
 		if idx != len(blocks)-1:
 			alignBytes = alignToBytes(16, fileSize + dataSize)
 			blockData += alignBytes[0]
@@ -227,7 +228,21 @@ def debugWriteListToFile(name, list):
 	for v in list:
 		file.write(str(v) + "\n")
 	file.close()
-
+def getBinaryFlag(flag: kv3.Flag) -> int:
+	# could just shift bits here???
+	match flag:
+		case kv3.Flag.resource:
+			return 1
+		case kv3.Flag.resource_name:
+			return 2
+		case kv3.Flag.panorama:
+			return 8
+		case kv3.Flag.soundevent:
+			return 16
+		case kv3.Flag.subclass:
+			return 32
+		case _:
+			return 0
 # special types like DOUBLE_ZERO, INT64_ONE can't exist in typed arrays, so we use default types
 def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 	if type(obj) is list:
@@ -268,6 +283,8 @@ def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 			return KVType.DOUBLE
 	elif obj is None:
 		return KVType.NULL
+	elif isinstance(obj, kv3.flagged_value): # assuming string value
+		return KVType.STRING | 0x80
 	else:
 		raise ValueError("KV3: Unhandled type: " + type(obj).__name__)
 
@@ -311,12 +328,16 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 			# if there's at least one empty array, then we assume every element as ARRAY type.
 			# TODO: does this only affect arrays or other types? Knowing this is not strictly necessary to output a valid file though.
 			subType = None
+			lastValue = None
 			for val in obj:
 				subType = getKVTypeFromInstance(val, True)
+				lastValue = val
 				if subType == KVType.ARRAY:
 					break
 			if arraySubType != KVType.ARRAY:
 				header.types += subType.to_bytes(1)
+				if(subType & 0x80 > 0): # flagged string
+					header.types += getBinaryFlag(lastValue.flags).to_bytes(1, "little")
 
 		for val in obj:
 			# we set the last array type here as arrays that contain the same type only save their type ONCE.
@@ -326,18 +347,24 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 			
 			data += buildKVStructure(val, header, arraySubType != KVType.ARRAY, arraySubType = subType)
 
-	elif type(obj) is str:
+	# I think only strings can have flags attached to them.
+	elif type(obj) is str or isinstance(obj, kv3.flagged_value):
+		strVal = obj
+		if isinstance(obj, kv3.flagged_value):
+			strVal = obj.value
 		stringID = len(header.strings) # we will be adding 1 if we're adding a string so this will actually point at the last element.
-		if obj in header.strings:
-			stringID = header.strings.index(obj) # Reuse existing id
-		elif len(obj) == 0:
+		if strVal in header.strings:
+			stringID = header.strings.index(strVal) # Reuse existing id
+		elif len(strVal) == 0:
 			stringID = -1
 		else:
-			header.strings.append(obj)
+			header.strings.append(strVal)
 			header.countOfStrings += 1
 		data += stringID.to_bytes(4, "little", signed=True)
 		if inTypedArray == False:
 			header.types += currentType.to_bytes(1)
+			if isinstance(obj, kv3.flagged_value):
+				header.types += getBinaryFlag(obj.flags).to_bytes(1, "little")
 		header.countOfIntegers += 1
 	elif isinstance(obj, bool):
 		header.types += currentType.to_bytes(1)
