@@ -187,7 +187,12 @@ def buildKVBlock(block_data, guid, header_info, visualName: str = "unnamed block
 	headerData.binaryBytes = bytes(headerData.binaryBytes)
 	headerData.binaryBytes += b'\x00' * (-len(headerData.binaryBytes) % 4) # align to 4 bytes
 	for v in headerData.doubles:
-		doublesBytes += struct.pack("<d", v) # little-endian eight bytes
+		if isinstance(v, float):
+			doublesBytes += struct.pack("<d", v) # little-endian eight bytes
+		elif isinstance(v, int):
+			doublesBytes += v.to_bytes(8, "little")
+		else:
+			raise ValueError("Unexpected type in doubles list.")
 	infoSectionLen = len(kvData) + 4 + len(headerData.binaryBytes)
 	kvData += b'\x00' * (-infoSectionLen % 8) # make sure that ints align to 8 bytes, as we have doubles next!
 
@@ -246,11 +251,23 @@ def getBinaryFlag(flag: kv3.Flag) -> int:
 # special types like DOUBLE_ZERO, INT64_ONE can't exist in typed arrays, so we use default types
 def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 	if type(obj) is list:
-		if(len(obj) > 0 and len(obj) < 256):
-			return KVType.ARRAY_TYPE_BYTE_LENGTH
-		elif(len(obj) > 0):
-			return KVType.ARRAY_TYPED
-		else: # len == 0
+		if len(obj) == 0:
+			return KVType.ARRAY
+		# check if all elements are the same, if so use a typed array
+		previousElementClass = getKVTypeFromInstance(obj[0], True) # TODO account for _ONE and _ZERO types
+		useTypedArray = True
+		for element in obj:
+			currType = getKVTypeFromInstance(element, True)
+			if currType != previousElementClass:
+				useTypedArray = False
+				break
+			previousElementClass = currType
+		if useTypedArray:
+			if(len(obj) < 256):
+				return KVType.ARRAY_TYPE_BYTE_LENGTH
+			else:
+				return KVType.ARRAY_TYPED
+		else:
 			return KVType.ARRAY
 	elif type(obj) is dict:
 		return KVType.OBJECT
@@ -269,11 +286,17 @@ def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 		else:
 			# it seems not all values that are above or equal 0 are marked as unsigned in official assets.
 			# however in this case if we know that we can't fit a unsigned value into 32bit signed int, so we use uint32
-			# TODO: What about 64 bit values? Haven't found any assets that use them yet.
-			if obj <= 2147483647:
-				return KVType.INT32
+			if obj.bit_length() <= 32:
+				if obj > 2147483647:
+					return KVType.UINT32
+				else:
+					return KVType.INT32
 			else:
-				return KVType.UINT32
+				if obj > 9223372036854775807:
+					return KVType.UINT64
+				else:
+					return KVType.INT64
+				
 	elif isinstance(obj, float):
 		if obj == 0.0 and inTypedArray == False:
 			return KVType.DOUBLE_ZERO
@@ -288,7 +311,7 @@ def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 	else:
 		raise ValueError("KV3: Unhandled type: " + type(obj).__name__)
 
-def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] = None) -> bytes:
+def buildKVStructure(obj, header, inTypedArray, subType: Optional[KVType] = None) -> bytes:
 	#global types, countOfIntegers, countOfEightByteValues, countOfStrings, binaryBytes, countOfBinaryBytes
 	data: list[bytes] = []
 	currentType = getKVTypeFromInstance(obj, inTypedArray)
@@ -313,9 +336,13 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 			data += buildKVStructure(value, header, False)
 	elif type(obj) is list:
 		# inside typed arrays we only add the type once (already done up in the call stack in this case)
+		useTypedArray = True
+		if currentType == KVType.ARRAY:
+			useTypedArray = False
 		if inTypedArray == False:
 			header.types += currentType.to_bytes(1)
-		if(len(obj) > 0 and len(obj) < 256) and arraySubType != KVType.ARRAY: # special case if the internal arrays have been tagged as different type.
+
+		if currentType == KVType.ARRAY_TYPE_BYTE_LENGTH:
 			header.binaryBytes += len(obj).to_bytes(1)
 			header.countOfBinaryBytes += 1
 		else: # length bigger than 1 byte
@@ -327,14 +354,9 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 			# eg. we know that arrays of 0 length get the ARRAY type and ARRAY_TYPE_BYTE_LENGTH type is used for arrays with 1-255 elements.
 			# if there's at least one empty array, then we assume every element as ARRAY type.
 			# TODO: does this only affect arrays or other types? Knowing this is not strictly necessary to output a valid file though.
-			subType = None
-			lastValue = None
-			for val in obj:
-				subType = getKVTypeFromInstance(val, True)
-				lastValue = val
-				if subType == KVType.ARRAY:
-					break
-			if arraySubType != KVType.ARRAY:
+			lastValue = obj[0]
+			subType = getKVTypeFromInstance(lastValue, True)
+			if useTypedArray: # is using typed array, add the types once here
 				header.types += subType.to_bytes(1)
 				if(subType & 0x80 > 0): # flagged string
 					header.types += getBinaryFlag(lastValue.flags).to_bytes(1, "little")
@@ -345,7 +367,7 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 			# seem to be only saved in non-typed arrays for each element.
 			# if we're not in a typed array we add the types right before and note that we are inside an array, so we don't add the type again.
 			
-			data += buildKVStructure(val, header, arraySubType != KVType.ARRAY, arraySubType = subType)
+			data += buildKVStructure(val, header, useTypedArray, subType)
 
 	# I think only strings can have flags attached to them.
 	elif type(obj) is str or isinstance(obj, kv3.flagged_value):
@@ -374,10 +396,17 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 		if (obj == 0 or obj == 1) and inTypedArray == False:
 			header.types += currentType.to_bytes(1)
 		else:
+			currentIntegerType = subType
 			if inTypedArray == False:
+				currentIntegerType = currentType
 				header.types += currentType.to_bytes(1)
-			data += obj.to_bytes(4, "little", signed=True if obj < 0 else False)
-			header.countOfIntegers += 1
+
+			if currentIntegerType == KVType.INT64 or currentIntegerType == KVType.UINT64:
+				header.doubles.append(obj)
+				header.countOfEightByteValues += 1
+			elif currentIntegerType == KVType.INT32 or currentIntegerType == KVType.UINT32:
+				data += obj.to_bytes(4, "little", signed=True if obj < 0 else False)
+				header.countOfIntegers += 1
 	elif isinstance(obj, float):
 		if (obj == 0.0 or obj == 1.0) and inTypedArray == False:
 			header.types += currentType.to_bytes(1)
