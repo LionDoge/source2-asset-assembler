@@ -9,6 +9,7 @@ from uuid import UUID
 import argparse
 import keyvalues3 as kv3
 import lz4.block
+import os
 from copy import deepcopy
 
 class KVType(IntEnum):
@@ -46,6 +47,7 @@ class FileHeaderInfo:
 @dataclass
 class FileBlock:
 	data: any
+	dataProcessed: bool
 	type: str
 	name: str
 
@@ -91,27 +93,40 @@ def buildFileData(version: int, headerVersion: int, blocks: list[FileBlock]) -> 
 	dataBlocks = []
 	for idx, block in enumerate(blocks):
 		printDebug(f"Processing block {idx+1} (name: {block.name} type: {block.type})")
-
-		blockHeaderInfo = FileHeaderInfo()
 		blockData: bytes = b''
-		if block.type == "kv3":
-			blockUUID: UUID = block.data.format.version
-			blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, visualName=block.name)
-		elif block.type == "text":
-			blockData = buildTextBlock(block.data, blockHeaderInfo, visualName=block.name)
+		dataSize = 0
+		usingExistingData = True
+		blockHeaderInfo = FileHeaderInfo()
+		if block.dataProcessed == False:
+			usingExistingData = False
+			if block.type == "kv3":
+				blockUUID: UUID = block.data.format.version
+				blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, visualName=block.name)
+			elif block.type == "text":
+				blockData = buildTextBlock(block.data, blockHeaderInfo, visualName=block.name)
+			else:
+				usingExistingData = True
+				blockData = block.data
+			block.dataProcessed = True
+		else:
+			blockData = block.data
 
+		if usingExistingData == False:
+			dataSize = blockHeaderInfo.size
+		else:
+			dataSize = len(blockData)
 		# fill with 0 bytes to align to 16 bytes
 		additionalOffset = 0
 		if idx != len(blocks)-1:
-			alignBytes = alignToBytes(16, fileSize + blockHeaderInfo.size)
+			alignBytes = alignToBytes(16, fileSize + dataSize)
 			blockData += alignBytes[0]
 			fileSize += alignBytes[1]
 			additionalOffset = alignBytes[1]
-		fileSize += blockHeaderInfo.size
+		fileSize += dataSize
 		dataBlocks.append(blockData)
 
-		combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), blockHeaderInfo.size.to_bytes(4, 'little')])
-		currentOffset += blockHeaderInfo.size + additionalOffset
+		combinedBlockHeaderData += b''.join([block.name.encode('ascii'), currentOffset.to_bytes(4, 'little'), dataSize.to_bytes(4, 'little')])
+		currentOffset += dataSize + additionalOffset
 		currentOffset -= 12 # -12 because we need to account for where the next offset value is placed.
 	
 	binData = b''.join([fileSize.to_bytes(4, 'little'), headerVersion, version, blockOffset, blockCount, # FILE HEADER (16 bytes)
@@ -173,7 +188,12 @@ def buildKVBlock(block_data, guid, header_info, visualName: str = "unnamed block
 	headerData.binaryBytes = bytes(headerData.binaryBytes)
 	headerData.binaryBytes += b'\x00' * (-len(headerData.binaryBytes) % 4) # align to 4 bytes
 	for v in headerData.doubles:
-		doublesBytes += struct.pack("<d", v) # little-endian eight bytes
+		if isinstance(v, float):
+			doublesBytes += struct.pack("<d", v) # little-endian eight bytes
+		elif isinstance(v, int):
+			doublesBytes += v.to_bytes(8, "little")
+		else:
+			raise ValueError("Unexpected type in doubles list.")
 	infoSectionLen = len(kvData) + 4 + len(headerData.binaryBytes)
 	kvData += b'\x00' * (-infoSectionLen % 8) # make sure that ints align to 8 bytes, as we have doubles next!
 
@@ -214,15 +234,41 @@ def debugWriteListToFile(name, list):
 	for v in list:
 		file.write(str(v) + "\n")
 	file.close()
-
+def getBinaryFlag(flag: kv3.Flag) -> int:
+	# could just shift bits here???
+	match flag:
+		case kv3.Flag.resource:
+			return 1
+		case kv3.Flag.resource_name:
+			return 2
+		case kv3.Flag.panorama:
+			return 8
+		case kv3.Flag.soundevent:
+			return 16
+		case kv3.Flag.subclass:
+			return 32
+		case _:
+			return 0
 # special types like DOUBLE_ZERO, INT64_ONE can't exist in typed arrays, so we use default types
 def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 	if type(obj) is list:
-		if(len(obj) > 0 and len(obj) < 256):
-			return KVType.ARRAY_TYPE_BYTE_LENGTH
-		elif(len(obj) > 0):
-			return KVType.ARRAY_TYPED
-		else: # len == 0
+		if len(obj) == 0:
+			return KVType.ARRAY
+		# check if all elements are the same, if so use a typed array
+		previousElementClass = getKVTypeFromInstance(obj[0], True) # TODO account for _ONE and _ZERO types
+		useTypedArray = True
+		for element in obj:
+			currType = getKVTypeFromInstance(element, True)
+			if currType != previousElementClass:
+				useTypedArray = False
+				break
+			previousElementClass = currType
+		if useTypedArray:
+			if(len(obj) < 256):
+				return KVType.ARRAY_TYPE_BYTE_LENGTH
+			else:
+				return KVType.ARRAY_TYPED
+		else:
 			return KVType.ARRAY
 	elif type(obj) is dict:
 		return KVType.OBJECT
@@ -241,11 +287,17 @@ def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 		else:
 			# it seems not all values that are above or equal 0 are marked as unsigned in official assets.
 			# however in this case if we know that we can't fit a unsigned value into 32bit signed int, so we use uint32
-			# TODO: What about 64 bit values? Haven't found any assets that use them yet.
-			if obj <= 2147483647:
-				return KVType.INT32
+			if obj.bit_length() <= 32:
+				if obj > 2147483647:
+					return KVType.UINT32
+				else:
+					return KVType.INT32
 			else:
-				return KVType.UINT32
+				if obj > 9223372036854775807:
+					return KVType.UINT64
+				else:
+					return KVType.INT64
+				
 	elif isinstance(obj, float):
 		if obj == 0.0 and inTypedArray == False:
 			return KVType.DOUBLE_ZERO
@@ -255,10 +307,12 @@ def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 			return KVType.DOUBLE
 	elif obj is None:
 		return KVType.NULL
+	elif isinstance(obj, kv3.flagged_value): # assuming string value
+		return KVType.STRING | 0x80
 	else:
 		raise ValueError("KV3: Unhandled type: " + type(obj).__name__)
 
-def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] = None) -> bytes:
+def buildKVStructure(obj, header, inTypedArray, subType: Optional[KVType] = None) -> bytes:
 	#global types, countOfIntegers, countOfEightByteValues, countOfStrings, binaryBytes, countOfBinaryBytes
 	data: list[bytes] = []
 	currentType = getKVTypeFromInstance(obj, inTypedArray)
@@ -283,9 +337,13 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 			data += buildKVStructure(value, header, False)
 	elif type(obj) is list:
 		# inside typed arrays we only add the type once (already done up in the call stack in this case)
+		useTypedArray = True
+		if currentType == KVType.ARRAY:
+			useTypedArray = False
 		if inTypedArray == False:
 			header.types += currentType.to_bytes(1)
-		if(len(obj) > 0 and len(obj) < 256) and arraySubType != KVType.ARRAY: # special case if the internal arrays have been tagged as different type.
+
+		if currentType == KVType.ARRAY_TYPE_BYTE_LENGTH:
 			header.binaryBytes += len(obj).to_bytes(1)
 			header.countOfBinaryBytes += 1
 		else: # length bigger than 1 byte
@@ -297,13 +355,12 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 			# eg. we know that arrays of 0 length get the ARRAY type and ARRAY_TYPE_BYTE_LENGTH type is used for arrays with 1-255 elements.
 			# if there's at least one empty array, then we assume every element as ARRAY type.
 			# TODO: does this only affect arrays or other types? Knowing this is not strictly necessary to output a valid file though.
-			subType = None
-			for val in obj:
-				subType = getKVTypeFromInstance(val, True)
-				if subType == KVType.ARRAY:
-					break
-			if arraySubType != KVType.ARRAY:
+			lastValue = obj[0]
+			subType = getKVTypeFromInstance(lastValue, True)
+			if useTypedArray: # is using typed array, add the types once here
 				header.types += subType.to_bytes(1)
+				if(subType & 0x80 > 0): # flagged string
+					header.types += getBinaryFlag(lastValue.flags).to_bytes(1, "little")
 
 		for val in obj:
 			# we set the last array type here as arrays that contain the same type only save their type ONCE.
@@ -311,20 +368,26 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 			# seem to be only saved in non-typed arrays for each element.
 			# if we're not in a typed array we add the types right before and note that we are inside an array, so we don't add the type again.
 			
-			data += buildKVStructure(val, header, arraySubType != KVType.ARRAY, arraySubType = subType)
+			data += buildKVStructure(val, header, useTypedArray, subType)
 
-	elif type(obj) is str:
+	# I think only strings can have flags attached to them.
+	elif type(obj) is str or isinstance(obj, kv3.flagged_value):
+		strVal = obj
+		if isinstance(obj, kv3.flagged_value):
+			strVal = obj.value
 		stringID = len(header.strings) # we will be adding 1 if we're adding a string so this will actually point at the last element.
-		if obj in header.strings:
-			stringID = header.strings.index(obj) # Reuse existing id
-		elif len(obj) == 0:
+		if strVal in header.strings:
+			stringID = header.strings.index(strVal) # Reuse existing id
+		elif len(strVal) == 0:
 			stringID = -1
 		else:
-			header.strings.append(obj)
+			header.strings.append(strVal)
 			header.countOfStrings += 1
 		data += stringID.to_bytes(4, "little", signed=True)
 		if inTypedArray == False:
 			header.types += currentType.to_bytes(1)
+			if isinstance(obj, kv3.flagged_value):
+				header.types += getBinaryFlag(obj.flags).to_bytes(1, "little")
 		header.countOfIntegers += 1
 	elif isinstance(obj, bool):
 		header.types += currentType.to_bytes(1)
@@ -334,10 +397,17 @@ def buildKVStructure(obj, header, inTypedArray, arraySubType: Optional[KVType] =
 		if (obj == 0 or obj == 1) and inTypedArray == False:
 			header.types += currentType.to_bytes(1)
 		else:
+			currentIntegerType = subType
 			if inTypedArray == False:
+				currentIntegerType = currentType
 				header.types += currentType.to_bytes(1)
-			data += obj.to_bytes(4, "little", signed=True if obj < 0 else False)
-			header.countOfIntegers += 1
+
+			if currentIntegerType == KVType.INT64 or currentIntegerType == KVType.UINT64:
+				header.doubles.append(obj)
+				header.countOfEightByteValues += 1
+			elif currentIntegerType == KVType.INT32 or currentIntegerType == KVType.UINT32:
+				data += obj.to_bytes(4, "little", signed=True if obj < 0 else False)
+				header.countOfIntegers += 1
 	elif isinstance(obj, float):
 		if (obj == 0.0 or obj == 1.0) and inTypedArray == False:
 			header.types += currentType.to_bytes(1)
@@ -434,7 +504,7 @@ def parseJsonStructure(file: str):
 				# search relative to the JSON file
 				fullPath = (Path(file).parents[0] / Path(block['file'])).resolve()
 				fileData = readBytesFromFile(fullPath, block['type'])
-				blocks.append(FileBlock(data=fileData, type=block['type'], name=block['name']))
+				blocks.append(FileBlock(data=fileData, type=block['type'], name=block['name'], dataProcessed=False))
 				currentBlock += 1
 			return AssetInfo(version, headerVersion, blocks)
 	except FileNotFoundError as e:
@@ -448,16 +518,16 @@ def parseJsonStructure(file: str):
 
 assetPresetInfo = {
 	"vpulse": AssetInfo(version=0, headerVersion=12, blocks=[
-		FileBlock(type="kv3", name="RED2", data=None),
-		FileBlock(type="kv3", name="DATA", data=None)
+		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
+		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
 	]),
 	"vrr": AssetInfo(version=9, headerVersion=12, blocks=[
-		FileBlock(type="kv3", name="RED2", data=None),
-		FileBlock(type="kv3", name="DATA", data=None)
+		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
+		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
 	]),
 	"cs2vanmgrph": AssetInfo(version=0, headerVersion=12, blocks=[
-		FileBlock(type="kv3", name="RED2", data=None),
-		FileBlock(type="kv3", name="DATA", data=None)
+		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
+		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
 	]),
 }
 # This section should probably be redone and reuse pre-defined JSONs as templates.
@@ -477,6 +547,54 @@ def buildAssetFromPreset(preset: str, files: list[str]) -> bytes:
 		raise
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"One of the specified files doesn't exist: {e}")
+	
+def editAssetFile(file: Path | str, replacementData: list[FileBlock]) -> AssetInfo:
+	try:
+		assetInfo = readAssetFile(file, True)
+		for idx, block in enumerate(assetInfo.blocks):
+			if block.name == replacementData[idx].name:
+				block.data = replacementData[idx].data
+		return assetInfo
+	except FileNotFoundError as e:
+		raise FileNotFoundError(f"Failed to open file: {e}")
+
+def getTypeFromMagic(magic: bytes) -> str:
+	if magic == 1263940356:
+		return "kv3"
+	else: # we don't support other types, so assuming here...
+		return "text"
+
+def readAssetFile(file: Path | str, includeData: bool = False) -> AssetInfo:
+	try:
+		assetInfo: AssetInfo = AssetInfo(0, 0, [])
+		with open(file, "rb") as f:
+			fileSize = struct.unpack("<I", f.read(4))[0]
+			assetInfo.headerVersion = struct.unpack("<H", f.read(2))[0]
+			assetInfo.version = struct.unpack("<H", f.read(2))[0]
+			blockOffset = struct.unpack("<I", f.read(4))[0]
+			blockCount = struct.unpack("<I", f.read(4))[0]
+			f.seek(8 + blockOffset, os.SEEK_SET)
+			for i in range(blockCount):
+				blockName = f.read(4).decode('ascii')
+				blockOffset = struct.unpack("<I", f.read(4))[0]
+				blockSize = struct.unpack("<I", f.read(4))[0]
+				currentOffset = f.tell()
+				f.seek(blockOffset - 8, os.SEEK_CUR)
+
+				blockType = getTypeFromMagic(struct.unpack("<I", f.read(4))[0])
+				f.seek(-4, os.SEEK_CUR)
+				blockData = None
+				dataProcessed = False
+				if includeData:
+					dataProcessed = True
+					blockData = f.read(blockSize)
+				f.seek(currentOffset, os.SEEK_SET)
+				assetInfo.blocks.append(FileBlock(data=blockData, type=blockType, name=blockName, dataProcessed=dataProcessed))
+		return assetInfo
+	except FileNotFoundError as e:
+		raise FileNotFoundError(f"Failed to open file: {e}")
+	except struct.error as e:
+		raise ValueError(f"Failed to deserialize file: {e} it might not be a valid asset.")
 
 g_isVerbose = False
 def printDebug(msg):
@@ -491,13 +609,19 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Tool to assemble Source 2 assets manually.", epilog=example,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("-v", "--verbose", help="Enable verbose output", action="store_true")
-	file_struct_group = parser.add_mutually_exclusive_group(required=True)
-	file_struct_group.add_argument("-s", "--schema",
+	input_group = parser.add_mutually_exclusive_group(required=True)
+	input_group.add_argument("-b", "--base",
+								help="Use a compiled file as a base for the stucture of the file to compile",
+								type=str, metavar="<compiled asset file>")
+	input_group.add_argument("-s", "--schema",
 								help="Use a JSON file with the definition of the file structure to compile (see README for an example)",
 								type=str, metavar="<json file>")
-	file_struct_group.add_argument("-p", "--preset",
+	input_group.add_argument("-p", "--preset",
 								help="Use a preset for the file structure, supported presets: " + ', '.join(list(assetPresetInfo.keys())),
 								type=str, metavar="<preset>")
+	input_group.add_argument("-e", "--edit", 
+								help="Edit an existing asset file, requires -f flag with the same amount of files as the base file.",
+								type=str, nargs="+", metavar="<compiled asset file> <BLOCK1> <BLOCK2> ...")
 	parser.add_argument("-f", "--files", 
 					 help="List of files to use, only to be used with -b or -p, amount of files depends on the structure of the base file/preset that was specified",
 					 type=str, nargs="+", metavar="<file1> <file2> ...")
@@ -520,8 +644,36 @@ if __name__ == "__main__":
 				sys.exit(1)
 			printDebug(f"Using preset: {args.preset}")
 			binaryData = buildAssetFromPreset(args.preset, args.files)
+		elif args.base is not None:
+			if(args.base.endswith("_c") == False):
+				print("--base argument requires a compiled asset file.")
+				sys.exit(1)
+			assetInfo = readAssetFile(args.base)
+			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
+		elif args.edit is not None:
+			if(args.edit[0].endswith("_c") == False):
+				print("--edit argument requires a compiled asset file.")
+				sys.exit(1)
+			assetInfo: AssetInfo = readAssetFile(args.edit[0], True)
+			maxBlocks: int = len(args.edit) - 1
+			for idx, file in enumerate(args.files):
+				currBlock: int = args.edit[idx+1]
+				blockIdx: int = -1
+				for currIdx, block in enumerate(assetInfo.blocks):
+					if block.name == currBlock:
+						blockIdx = currIdx
+						break
+				else:
+					raise ValueError(f"Block {currBlock} not found in the input file.")
+				fullPath = Path(file).resolve()
+				assetInfo.blocks[blockIdx].data = readBytesFromFile(fullPath, assetInfo.blocks[blockIdx].type)
+				assetInfo.blocks[blockIdx].dataProcessed = False # we need to reprocess the data.
+			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
+		else:
+			print("One of the following flags is required to compile an asset: -s, -p, -b, -e Use -h for help.")
+			sys.exit(0)
 	except (FileNotFoundError, ValueError) as e: # let's not handle json and kv3 errors, it might be useful to get a full call stack.
-		print(str(e))
+		print("ERROR: " + str(e) + ". Asset was not processed.")
 		sys.exit(1)
 	try:
 		with open(args.output, "wb") as f:
