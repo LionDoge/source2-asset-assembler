@@ -1,0 +1,60 @@
+<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:vrfunknown:version{c1f07085-5299-4e8a-b7e9-1cbb66bbbe23} -->
+{
+	m_Includes = 
+	[
+		"scripts/talker/shared.vrr",
+	]
+	m_SoundEventScripts = 
+	[
+		"soundevents/vo/agents/vo_hero_char.vsndevts",
+	]
+	m_ResponseGroups = 
+	[
+		{
+            m_name = "AffirmativeYesChar"
+            m_notes = "Radio"
+            m_responses = 
+            [
+                
+                {
+                    m_type = "SPEAK"
+                    m_value = "char.affirmative01"
+                },
+                
+                {
+                    m_type = "SPEAK"
+                    m_value = "char.affirmative02"
+                },
+                
+                {
+                    m_type = "SPEAK"
+                    m_value = "char.affirmative03"
+                },                
+              
+            ]
+            m_pEmbeddedRule = 
+            {
+                m_name = "AffirmativeYesChar"
+                m_Requirements = 
+                [
+                    "TLK_Affirmative",
+                    "IsChar",
+                    "IsTalkChar",
+                ]
+				m_context = "Talkchar:1:1"
+                m_bApplyContextToWorld = true
+            }			
+        },
+	]
+	m_Requirements =
+	[
+	    {
+            m_name = "IsChar"
+            m_notes = "Win responses"
+            m_matchKey = "model"
+            m_matchExpr = "my_char"
+            m_bRequired = true
+        },
+	]
+    m_speakerType = "player"
+}	

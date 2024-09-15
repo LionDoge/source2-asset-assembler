@@ -78,3 +78,6 @@ Either in a virtual environment or in a global context run:
 ## Contributing
 There are no hard set rules for contributing. Fixes or code improvements and refactorizations are very welcome. If you're planning on adding a new feature, it might be a good idea to discuss it first or to create a draft pull request **early** to get the idea across.
  I don't want you to waste your time working on a feature that might not be fitting for the vision of this software.
+
+## Attributions
+Creating this was made hugely possible thanks to people behind ValveResourceFormat/Source2Viewer, and their work on reverse engineering the asset format. Some data structures were directly used from their software's code **MIT License | Copyright (c) 2015 ValveResourceFormat Contributors**
