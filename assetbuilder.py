@@ -116,10 +116,7 @@ def buildFileData(version: int, headerVersion: int, blocks: list[FileBlock]) -> 
 		else:
 			dataSize = len(blockData)
 		# fill with 0 bytes to align to 16 bytes
-<<<<<<< HEAD
 		additionalOffset = 0
-=======
->>>>>>> 323feec (Add asset editing functionality)
 		if idx != len(blocks)-1:
 			alignBytes = alignToBytes(16, fileSize + dataSize)
 			blockData += alignBytes[0]
