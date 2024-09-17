@@ -13,8 +13,18 @@ This tool is meant to allow editing of such assets, or creating new ones from sc
 > [!WARNING]
 > This tool is meant for somewhat experienced modders. Assets created in this way have no easy way to be validated by the game, because they were not compiled by using their official compiler, which could properly verify it. This means that due to any, even tiny mistakes the asset might not work or cause crashes with very little or no explaination from the game. You're on your own here!
 
+### TODO
+- [ ] Support more asset types / KV3 versions
+- [ ] Allow binary data to be used as input
+- [ ] vxml layout content compiler
+- [ ] `--watch` parameter to recompile asset right after saving
+- [ ] filelist input
+
 ## Usage
-Currently there are two ways of running the asset builder. First one is to use a JSON 'Schematic' file that defines the structure of the asset and the files that go with it. The second one is to use a preset.
+There are a few ways of using the asset builder. Files can either be created from scratch with a custom layout, or an existing asset can be edited by swapping out own provided block data.
+
+## Creating Assets
+First one is to use a JSON 'Schematic' file that defines the structure of the asset and the files that go with it. The second one is to use a preset or a structure based on an existing asset, and provide the inputs manually.
 ### JSON Schema usage
 This is example of a JSON file usable with this tool. It defines the valid structure for a VPULSE asset.
 You can find more examples in the `examples` directory.
@@ -66,6 +76,16 @@ To compile using a preset use the `-p` or `--preset` flag, with the preset name 
 
 example:
 `python assetbuilder.py -p vpulse -f pulsefile_redi.kv3 pulsefile.vpulse -o pulsefile.vpulse_c`
+
+### Using a existing asset as a base
+If there's no provided preset or you don't want to create a custom JSON file, instead of `-p/--preset` it's possible to use `-b/--base` argument and provide a compiled asset file, it will be used as a structure for the compiled asset. The usage is very similar as when using the presets (see above).
+**NOTE** Only more basic assets will be supported, as only text and kv3 data is supported at this moment.
+
+## Editing assets
+More compilcated assets can be edited directly, by swapping out their 'blocks'. This might be useful for smaller changes, without having to recompile an asset if an ordinary recompilation of it is hard or impossible. To do so use the `-e` or `--edit` parameter, followed by an input file, and the blocks that you want swapped. Afterwards input the same order with the `-f` argument.
+
+example: swapping out the `DATA` block of a vmdl asset:
+`assetbuilder.py -e wraith.vmdl_c DATA -f wraith_data.kv3 -o wraith_new.vmdl_c`
 
 ## Installation
 Requirements: Python (preferably >= 3.12.5) and pip.
