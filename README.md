@@ -22,7 +22,7 @@ You can find more examples in the `examples` directory.
 {
     "info": {
         "headerversion": 12,
-        "version": 9
+        "version": 0
     },
     "blocks": [
         {
