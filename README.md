@@ -71,6 +71,7 @@ Currently supported (and tested) asset types include:
 | `vpulse` | Pulse Graph |
 | `vrr` | Response Rules |
 | `cs2vanmgrph` | CS2 AnimGraph |
+| `smartptop` | Smart Prop |
 
 To compile using a preset use the `-p` or `--preset` flag, with the preset name from the table. The parameter also requires a certain number of input files depending on the type, provied one after another with `-f` or `--files` parameters. As always it also requires the `-o` or `--output` parameter with the filename.
 
