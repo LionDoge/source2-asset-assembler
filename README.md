@@ -56,7 +56,7 @@ The `info` block contains the information stored at the very beginning of the as
 
 The `blocks` section contains an array of blocks that are part of the asset. Every object contains the following parameters:
 
-- `type` - type of data stored, currently `kv3` and `text` values are supported only, there's no support for other binary data currently.
+- `type` - type of data stored, supported values right now are: `kv3v4`, `kv3v3` or `kv3` (which will default to binary v4) and also just plain text: `text`
 - `name` - name of the block (as can be seen in Source 2 Viewer). It must be a **4 letter ASCII string**.
 - `file` - the source file to use for this block's data. File path is **relative** to the directory of the JSON file.
 
