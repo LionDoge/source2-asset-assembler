@@ -37,7 +37,7 @@ class KVType(IntEnum):
 	UINT16 = 21,
 	UNKNOWN_22 = 22,
 	INT32_AS_BYTE = 23,
-	ARRAY_TYPE_BYTE_LENGTH = 24 # typed array with length < 256. Saved as 1 byte in binaryBytes section
+	ARRAY_TYPE_BYTE_LENGTH = 24 # typed array with length <= 256. Saved as 1 byte in binaryBytes section
 
 @dataclass
 class FileHeaderInfo:
@@ -99,9 +99,12 @@ def buildFileData(version: int, headerVersion: int, blocks: list[FileBlock]) -> 
 		blockHeaderInfo = FileHeaderInfo()
 		if block.dataProcessed == False:
 			usingExistingData = False
-			if block.type == "kv3":
+			if block.type == "kv3" or block.type == "kv3v4":
 				blockUUID: UUID = block.data.format.version
-				blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, visualName=block.name)
+				blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, 4, visualName=block.name)
+			elif block.type == "kv3v3":
+				blockUUID: UUID = block.data.format.version
+				blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, 3, visualName=block.name)
 			elif block.type == "text":
 				blockData = buildTextBlock(block.data, blockHeaderInfo, visualName=block.name)
 			else:
@@ -144,11 +147,13 @@ def buildTextBlock(textData, textHeaderInfo, visualName: str = "unnamed block") 
 	printDebug(f"Text size: {textHeaderInfo.size}\n")
 	return textData
 
-def buildKVBlock(block_data, guid, header_info, visualName: str = "unnamed block") -> bytes:
+def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName: str = "unnamed block") -> bytes:
 	# The definitions at the beginning here are useless in terms of the functionality
 	# However I decided to keep them here in approperiate order to make it easier to understand the structure of the KV3 data.
+	if kv3version != 4 and kv3version != 3:
+		raise NotImplementedError("Unsupported KV3 version.")
 	headerData = KVBaseData()
-	kv3ver = b'\x04' # For now we only support version 4 of KV3
+	kv3ver = kv3version.to_bytes(1)
 	constantsAfterGUID = b'\x01\x00\x00\x00\x00\x00\x00\x40' # contains compressionMethod, compressionDictionaryID and compressionFrameSize.
 	headerData.countOfBinaryBytes = 0
 	headerData.countOfIntegers = 1 # All of the actual kv Data plus countOfStrings, which is always here, so we start from one.
@@ -159,6 +164,7 @@ def buildKVBlock(block_data, guid, header_info, visualName: str = "unnamed block
 	headerData.compressedSize = 0 # compressed kv3 block size
 	blockCount: int = 0 # always the same
 	blockTotalSize: int = 0 # always the same
+	# KV3v4 specific values
 	countOfTwoByteValues: int = 0 # we don't use 16 bit values when building. Is this necessary for some assets to work?
 	unknown: int = 0 # can ignore for now.
 	# after all this we finally have actual kv data...
@@ -178,7 +184,7 @@ def buildKVBlock(block_data, guid, header_info, visualName: str = "unnamed block
 	# this comes after types list.
 	blockEndTrailer: int = 4293844224 # this should always be this value.
 	# write the binary kv data, and output all stats into headerData
-	kvData = buildKVStructure(block_data.value, headerData, False)
+	kvData = buildKVStructure(block_data.value, headerData, False, kv3version == 4)
 	headerData.countOfStrings = len(headerData.strings)
 	headerData.countOfBinaryBytes = len(headerData.binaryBytes)
 	# null terminate all strings
@@ -211,9 +217,9 @@ def buildKVBlock(block_data, guid, header_info, visualName: str = "unnamed block
 							headerData.countOfEightByteValues.to_bytes(4, 'little'),
 							headerData.stringAndTypesBufferSize.to_bytes(4, "little"),
 						   	preallocValues, uncompressedSize, compressedSize, 
-							blockCount.to_bytes(4, "little"), blockTotalSize.to_bytes(4, "little"), 
-							countOfTwoByteValues.to_bytes(4, "little"), unknown.to_bytes(4, "little")])
-
+							blockCount.to_bytes(4, "little"), blockTotalSize.to_bytes(4, "little")])
+	if kv3version == 4:
+		blockDataBase += countOfTwoByteValues.to_bytes(4, "little") + unknown.to_bytes(4, "little")
 	header_info.size = len(blockDataBase + blockDataCompressed)
 	if g_isVerbose:
 		print(f"Stats for {visualName} block (UUID: {str(UUID(bytes_le=guid))}):")
@@ -234,21 +240,36 @@ def debugWriteListToFile(name, list):
 	for v in list:
 		file.write(str(v) + "\n")
 	file.close()
-def getBinaryFlag(flag: kv3.Flag) -> int:
-	# could just shift bits here???
-	match flag:
-		case kv3.Flag.resource:
-			return 1
-		case kv3.Flag.resource_name:
-			return 2
-		case kv3.Flag.panorama:
-			return 8
-		case kv3.Flag.soundevent:
-			return 16
-		case kv3.Flag.subclass:
-			return 32
-		case _:
-			return 0
+def getKV3MappedFlag(flag: kv3.Flag, useLinearTypes: bool) -> int:
+	if useLinearTypes:
+		# we need to skip over multiline string flag, that's why we don't use enums directly.
+		match flag:
+			case kv3.Flag.resource:
+				return 1
+			case kv3.Flag.resource_name:
+				return 2
+			case kv3.Flag.panorama:
+				return 3
+			case kv3.Flag.soundevent:
+				return 4
+			case kv3.Flag.subclass:
+				return 5
+			case _:
+				return 0
+	else:
+		match flag:
+			case kv3.Flag.resource:
+				return 1
+			case kv3.Flag.resource_name:
+				return 2
+			case kv3.Flag.panorama:
+				return 8
+			case kv3.Flag.soundevent:
+				return 16
+			case kv3.Flag.subclass:
+				return 32
+			case _:
+				return 0
 # special types like DOUBLE_ZERO, INT64_ONE can't exist in typed arrays, so we use default types
 def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 	if type(obj) is list:
@@ -312,7 +333,7 @@ def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 	else:
 		raise ValueError("KV3: Unhandled type: " + type(obj).__name__)
 
-def buildKVStructure(obj, header, inTypedArray, subType: Optional[KVType] = None) -> bytes:
+def buildKVStructure(obj, header, inTypedArray, useLinearFlagTypes = False, subType: Optional[KVType] = None) -> bytes:
 	#global types, countOfIntegers, countOfEightByteValues, countOfStrings, binaryBytes, countOfBinaryBytes
 	data: list[bytes] = []
 	currentType = getKVTypeFromInstance(obj, inTypedArray)
@@ -334,7 +355,7 @@ def buildKVStructure(obj, header, inTypedArray, subType: Optional[KVType] = None
 				header.countOfIntegers += 1
 			else:
 				raise ValueError("KV3: Keys must be strings.")
-			data += buildKVStructure(value, header, False)
+			data += buildKVStructure(value, header, False, useLinearFlagTypes)
 	elif type(obj) is list:
 		# inside typed arrays we only add the type once (already done up in the call stack in this case)
 		useTypedArray = True
@@ -360,7 +381,7 @@ def buildKVStructure(obj, header, inTypedArray, subType: Optional[KVType] = None
 			if useTypedArray: # is using typed array, add the types once here
 				header.types += subType.to_bytes(1)
 				if(subType & 0x80 > 0): # flagged string
-					header.types += getBinaryFlag(lastValue.flags).to_bytes(1, "little")
+					header.types += getKV3MappedFlag(lastValue.flags, useLinearFlagTypes).to_bytes(1)
 
 		for val in obj:
 			# we set the last array type here as arrays that contain the same type only save their type ONCE.
@@ -368,7 +389,7 @@ def buildKVStructure(obj, header, inTypedArray, subType: Optional[KVType] = None
 			# seem to be only saved in non-typed arrays for each element.
 			# if we're not in a typed array we add the types right before and note that we are inside an array, so we don't add the type again.
 			
-			data += buildKVStructure(val, header, useTypedArray, subType)
+			data += buildKVStructure(val, header, useTypedArray, useLinearFlagTypes, subType)
 
 	# I think only strings can have flags attached to them.
 	elif type(obj) is str or isinstance(obj, kv3.flagged_value):
@@ -387,7 +408,7 @@ def buildKVStructure(obj, header, inTypedArray, subType: Optional[KVType] = None
 		if inTypedArray == False:
 			header.types += currentType.to_bytes(1)
 			if isinstance(obj, kv3.flagged_value):
-				header.types += getBinaryFlag(obj.flags).to_bytes(1, "little")
+				header.types += getKV3MappedFlag(obj.flags, useLinearFlagTypes).to_bytes(1)
 		header.countOfIntegers += 1
 	elif isinstance(obj, bool):
 		header.types += currentType.to_bytes(1)
@@ -431,7 +452,7 @@ class AssetInfo:
 def readBytesFromFile(file: Path | str, type: str) -> bytes:
 	try:
 		fileData: bytes = None
-		if type == "kv3":
+		if type == "kv3" or type == "kv3v4" or type == "kv3v3":
 			fileData = kv3.read(file)
 		elif type == "text":
 			with open(file, "r", encoding="utf-8") as f:
@@ -442,6 +463,7 @@ def readBytesFromFile(file: Path | str, type: str) -> bytes:
 	except FileNotFoundError as e:
 		raise
 # Not the prettiest, we might switch to a library later on.
+SUPPORTED_TYPES = ["kv3", "kv3v3", "kv3v4" "text"]
 def validateJsonStructure(loadedData):
 	if loadedData is None:
 		raise ValueError("empty or invalid.")
@@ -476,8 +498,8 @@ def validateJsonStructure(loadedData):
 				raise ValueError("missing 'type' key in block no. " + str(idx+1))
 			if not isinstance(block['type'], str):
 				raise ValueError("'type' must be a string, in block no. " + str(idx+1))
-			if block['type'] not in ["kv3", "text"]:
-				raise ValueError("'type' must be either 'kv3' or 'text', in block no. " + str(idx+1))
+			if block['type'] not in SUPPORTED_TYPES:
+				raise ValueError(f"'type' must be in: {SUPPORTED_TYPES}, in block no. " + str(idx+1))
 			if 'name' not in block:
 				raise ValueError("missing 'name' key in block no. " + str(idx+1))
 			if not isinstance(block['name'], str):
@@ -528,6 +550,10 @@ assetPresetInfo = {
 	"cs2vanmgrph": AssetInfo(version=0, headerVersion=12, blocks=[
 		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
 		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
+	]),
+	"smartprop": AssetInfo(version=0, headerVersion=12, blocks=[
+		FileBlock(type="kv3v3", name="RED2", data=None, dataProcessed=False),
+		FileBlock(type="kv3v3", name="DATA", data=None, dataProcessed=False)
 	]),
 }
 # This section should probably be redone and reuse pre-defined JSONs as templates.
