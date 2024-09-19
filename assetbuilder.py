@@ -411,7 +411,8 @@ def buildKVStructure(obj, header, inTypedArray, useLinearFlagTypes = False, subT
 				header.types += getKV3MappedFlag(obj.flags, useLinearFlagTypes).to_bytes(1)
 		header.countOfIntegers += 1
 	elif isinstance(obj, bool):
-		header.types += currentType.to_bytes(1)
+		if inTypedArray == False:
+			header.types += currentType.to_bytes(1)
 		# no additional data...
 	elif isinstance(obj, int):
 		# 1s and 0s don't get special types in arrays, trying to use them will confuse the game with array size.
