@@ -684,14 +684,36 @@ if __name__ == "__main__":
 			assetInfo: AssetInfo = readAssetFile(args.edit[0], True)
 			maxBlocks: int = len(args.edit) - 1
 			for idx, file in enumerate(args.files):
-				currBlock: int = args.edit[idx+1]
+				currBlock = args.edit[idx+1]
+				userBlockIndex = -1 # -1 means that user didn't provide the index, we may have to warn in this case.
+				if(len(currBlock) > 4):
+					# try to extract the block index
+					try:
+						userBlockIndex = int(currBlock[4:])
+						if userBlockIndex < 0:
+							raise ValueError("Invalid block index provided.")
+						currBlock = currBlock[:4]
+					except ValueError as e:
+						raise ValueError(f"Invalid block name syntax provided: '{currBlock}' a number is expected after the 4 letter block name.")
 				blockIdx: int = -1
+				matchCount = 0
 				for currIdx, block in enumerate(assetInfo.blocks):
 					if block.name == currBlock:
-						blockIdx = currIdx
-						break
-				else:
-					raise ValueError(f"Block {currBlock} not found in the input file.")
+						if userBlockIndex >= 0:
+							if userBlockIndex == matchCount:
+								blockIdx = currIdx
+								break
+						else:
+							blockIdx = currIdx
+
+						matchCount += 1
+						if matchCount > 1 and userBlockIndex < 0:
+							print(f"Block {currBlock} exists multiple times, provide an index number after the name to specify which one to replace.\n"
+							f"Example: {currBlock}0 to target the first one {currBlock}1 for second one, and so on.")
+							sys.exit(1)
+				if blockIdx == -1:
+					raise ValueError(f"Block {currBlock}" + (f" (idx={userBlockIndex})" if userBlockIndex > 0 else "") + " was not found in the input file.")
+				printDebug("matched input block index: " + str(blockIdx))
 				fullPath = Path(file).resolve()
 				assetInfo.blocks[blockIdx].data = readBytesFromFile(fullPath, assetInfo.blocks[blockIdx].type)
 				assetInfo.blocks[blockIdx].dataProcessed = False # we need to reprocess the data.
@@ -700,7 +722,7 @@ if __name__ == "__main__":
 			print("One of the following flags is required to compile an asset: -s, -p, -b, -e Use -h for help.")
 			sys.exit(0)
 	except (FileNotFoundError, ValueError) as e: # let's not handle json and kv3 errors, it might be useful to get a full call stack.
-		print("ERROR: " + str(e) + ". Asset was not processed.")
+		print("ERROR: " + str(e) + "\nAsset was not processed.")
 		sys.exit(1)
 	try:
 		with open(args.output, "wb") as f:
