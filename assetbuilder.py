@@ -10,7 +10,7 @@ import argparse
 import keyvalues3 as kv3
 import lz4.block
 import os
-from copy import deepcopy
+from copy import copy, deepcopy
 
 class KVType(IntEnum):
 	STRING_MULTI = 0,
@@ -458,13 +458,16 @@ def readBytesFromFile(file: Path | str, type: str) -> bytes:
 		elif type == "text":
 			with open(file, "r", encoding="utf-8") as f:
 				fileData = bytes(f.read(), 'utf-8')
+		elif type == "bin":
+			with open(file, "rb") as f:
+				fileData = f.read()
 		else:
 			raise ValueError("Unsupported file type: " + type)
 		return fileData
 	except FileNotFoundError as e:
 		raise
 # Not the prettiest, we might switch to a library later on.
-SUPPORTED_TYPES = ["kv3", "kv3v3", "kv3v4" "text"]
+SUPPORTED_TYPES = ["kv3", "kv3v3", "kv3v4", "text", "bin"]
 def validateJsonStructure(loadedData):
 	if loadedData is None:
 		raise ValueError("empty or invalid.")
@@ -585,11 +588,24 @@ def editAssetFile(file: Path | str, replacementData: list[FileBlock]) -> AssetIn
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"Failed to open file: {e}")
 
-def getTypeFromMagic(magic: bytes) -> str:
-	if magic == 1263940356:
-		return "kv3"
-	else: # we don't support other types, so assuming here...
-		return "text"
+cachedReadData: bytes = b''
+def getFileType(file, size) -> str:
+	# first of all we can just easily check if it's a kv3 file...
+	startPos = file.tell()
+	if(size >= 4):
+		magic = struct.unpack("<I", file.read(4))[0]
+		if magic == 1263940356:
+			return "kv3v4"
+		elif magic == 1263940355:
+			return "kv3v3"
+	file.seek(startPos, os.SEEK_SET)
+	bytes = file.read(size)
+	global cachedReadData
+	cachedReadData = bytes
+	# almost any other type than text seems to contain null bytes or FF bytes. So it should be good enough.
+	if b'\x00' in bytes or b'\xFF' in bytes:
+		return "bin"
+	return "text"
 
 def readAssetFile(file: Path | str, includeData: bool = False) -> AssetInfo:
 	try:
@@ -602,19 +618,25 @@ def readAssetFile(file: Path | str, includeData: bool = False) -> AssetInfo:
 			blockCount = struct.unpack("<I", f.read(4))[0]
 			f.seek(8 + blockOffset, os.SEEK_SET)
 			for i in range(blockCount):
+				global cachedReadData
+				cachedReadData = b''
 				blockName = f.read(4).decode('ascii')
 				blockOffset = struct.unpack("<I", f.read(4))[0]
 				blockSize = struct.unpack("<I", f.read(4))[0]
 				currentOffset = f.tell()
 				f.seek(blockOffset - 8, os.SEEK_CUR)
 
-				blockType = getTypeFromMagic(struct.unpack("<I", f.read(4))[0])
+				blockType = getFileType(f, blockSize)
 				f.seek(-4, os.SEEK_CUR)
 				blockData = None
 				dataProcessed = False
 				if includeData:
 					dataProcessed = True
-					blockData = f.read(blockSize)
+					# don't read data from disk twice if we already did while checking the type
+					if cachedReadData == b'':
+						blockData = f.read(blockSize)
+					else:
+						blockData = copy(cachedReadData)
 				f.seek(currentOffset, os.SEEK_SET)
 				assetInfo.blocks.append(FileBlock(data=blockData, type=blockType, name=blockName, dataProcessed=dataProcessed))
 		return assetInfo
