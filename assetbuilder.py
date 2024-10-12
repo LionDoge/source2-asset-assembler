@@ -9,6 +9,7 @@ from uuid import UUID
 import argparse
 import keyvalues3 as kv3
 import lz4.block
+import lz4.frame
 import os
 from copy import copy, deepcopy
 
@@ -57,6 +58,9 @@ class KVBaseData:
 	types: list[bytes] = field(default_factory=list)
 	binaryBytes: list[bytes] = field(default_factory=list) # this list sits at almost the beginning of kv data.
 	doubles: list[float] = field(default_factory=list)
+	uncompressedBlockLengthArray: list[int] = field(default_factory=list)
+	uncompressedByteArrays: list[bytearray] = field(default_factory=list)
+	blockCount: int = 0
 	countOfIntegers: int = 0
 	countOfEightByteValues: int = 0
 	stringAndTypesBufferSize: int = 0
@@ -154,7 +158,8 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 		raise NotImplementedError("Unsupported KV3 version.")
 	headerData = KVBaseData()
 	kv3ver = kv3version.to_bytes(1)
-	constantsAfterGUID = b'\x01\x00\x00\x00\x00\x00\x00\x40' # contains compressionMethod, compressionDictionaryID and compressionFrameSize.
+	constantsAfterGUID = b'\x01\x00\x00\x00\x00\x00' # contains compressionMethod, compressionDictionaryID
+	compressionFrameSize = 16384
 	headerData.countOfBinaryBytes = 0
 	headerData.countOfIntegers = 1 # All of the actual kv Data plus countOfStrings, which is always here, so we start from one.
 	headerData.countOfEightByteValues = 0
@@ -162,7 +167,7 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 	preallocValues = b'\xFF\xFF\xFF\xFF' #! Apparently these are used to preallocate something, for safety I'll put in FFFF, it seems to be working fine so far.
 	headerData.uncompressedSize = 0 # decompressed kv3 block size
 	headerData.compressedSize = 0 # compressed kv3 block size
-	blockCount: int = 0 # always the same
+	headerData.blockCount = 0 # always the same
 	blockTotalSize: int = 0 # always the same
 	# KV3v4 specific values
 	countOfTwoByteValues: int = 0 # we don't use 16 bit values when building. Is this necessary for some assets to work?
@@ -181,8 +186,7 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 	stringsBytesList: list[bytes] = [] # transformed for appending
 	# after strings there is list of types, each one is one byte, the length is amount of types that we get from substracting string length from 'stringAndTypesLength'
 	headerData.types = []
-	# this comes after types list.
-	blockEndTrailer: int = 4293844224 # this should always be this value.
+	blockEndTrailer = b'\x00\xDD\xEE\xFF'
 	# write the binary kv data, and output all stats into headerData
 	kvData = buildKVStructure(block_data.value, headerData, False, kv3version == 4)
 	headerData.countOfStrings = len(headerData.strings)
@@ -203,24 +207,43 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 	infoSectionLen = len(kvData) + 4 + len(headerData.binaryBytes)
 	kvData += b'\x00' * (-infoSectionLen % 8) # make sure that ints align to 8 bytes, as we have doubles next!
 
+	# calculate binary blob data:
+	# in the compressed section we have 16bit compressed lengths of different blocks only if theyit length is above 0!
+	compressedLengths: list[int] = []
+	rawBlockBytes: bytes = b''
+	for arr in headerData.uncompressedByteArrays:
+		compressedBytes = lz4.block.compress(bytes(arr),compression=11,store_size=False)
+		compressedLen = len(compressedBytes)
+		if compressedLen > 0:
+			compressedLengths.append(compressedLen)
+		rawBlockBytes += compressedBytes
+
 	blockDataUncompressed = b''.join([headerData.binaryBytes, headerData.countOfStrings.to_bytes(4, "little"),
 								  	bytes(kvData), doublesBytes, b''.join(stringsBytesList), bytes(headerData.types),
-									blockEndTrailer.to_bytes(4, "little")])
+									])
+	if headerData.blockCount > 0:
+		for length in headerData.uncompressedBlockLengthArray:
+			blockDataUncompressed += length.to_bytes(4, "little")
+			blockTotalSize += length
+		blockDataUncompressed += blockEndTrailer
+		for length in compressedLengths:
+			blockDataUncompressed += length.to_bytes(2, "little")
 	# values tested based on 2v2_enable.vpulse_c
 	blockDataCompressed = lz4.block.compress(blockDataUncompressed, mode='high_compression',compression=11,store_size=False) 
 	# we need to note both sizes.
 	uncompressedSize = len(blockDataUncompressed).to_bytes(4, "little")
 	compressedSize = len(blockDataCompressed).to_bytes(4, "little")
 	blockDataBase = b''.join([kv3ver, "3VK".encode('ascii'), guid, constantsAfterGUID,
+						   	compressionFrameSize.to_bytes(2, 'little'),
 						   	headerData.countOfBinaryBytes.to_bytes(4, 'little'),
 							headerData.countOfIntegers.to_bytes(4, 'little'),
 							headerData.countOfEightByteValues.to_bytes(4, 'little'),
 							headerData.stringAndTypesBufferSize.to_bytes(4, "little"),
 						   	preallocValues, uncompressedSize, compressedSize, 
-							blockCount.to_bytes(4, "little"), blockTotalSize.to_bytes(4, "little")])
+							headerData.blockCount.to_bytes(4, "little"), blockTotalSize.to_bytes(4, "little")])
 	if kv3version == 4:
 		blockDataBase += countOfTwoByteValues.to_bytes(4, "little") + unknown.to_bytes(4, "little")
-	header_info.size = len(blockDataBase + blockDataCompressed)
+	header_info.size = len(blockDataBase + blockDataCompressed) + len(rawBlockBytes) + len(blockEndTrailer)
 	if g_isVerbose:
 		print(f"Stats for {visualName} block (UUID: {str(UUID(bytes_le=guid))}):")
 		print(f"countOfStrings: {headerData.countOfStrings} | len(strings): {len(headerData.strings)}")
@@ -231,9 +254,10 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 		print(f"typesLength {len(headerData.types)}")
 		print(f"uncompressedSize: {len(blockDataUncompressed)}")
 		print(f"compressedSize: {len(blockDataCompressed)}")
+		print(f"blockTotalSize: {blockTotalSize}")
 		print(f"Final block size: {header_info.size}\n")
 
-	return b''.join([blockDataBase, blockDataCompressed])
+	return b''.join([blockDataBase, blockDataCompressed, rawBlockBytes, blockEndTrailer])
 
 def debugWriteListToFile(name, list):
 	file = open(name, "w")
@@ -330,10 +354,12 @@ def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 		return KVType.NULL
 	elif isinstance(obj, kv3.flagged_value): # assuming string value
 		return KVType.STRING | 0x80
+	elif isinstance(obj, bytearray):
+		return KVType.BINARY_BLOB
 	else:
 		raise ValueError("KV3: Unhandled type: " + type(obj).__name__)
 
-def buildKVStructure(obj, header, inTypedArray, useLinearFlagTypes = False, subType: Optional[KVType] = None) -> bytes:
+def buildKVStructure(obj, header: KVBaseData, inTypedArray, useLinearFlagTypes = False, subType: Optional[KVType] = None) -> bytes:
 	#global types, countOfIntegers, countOfEightByteValues, countOfStrings, binaryBytes, countOfBinaryBytes
 	data: list[bytes] = []
 	currentType = getKVTypeFromInstance(obj, inTypedArray)
@@ -390,7 +416,13 @@ def buildKVStructure(obj, header, inTypedArray, useLinearFlagTypes = False, subT
 			# if we're not in a typed array we add the types right before and note that we are inside an array, so we don't add the type again.
 			
 			data += buildKVStructure(val, header, useTypedArray, useLinearFlagTypes, subType)
-
+	elif isinstance(obj, bytearray):
+		if inTypedArray == False:
+			header.types += currentType.to_bytes(1)
+		arrLength = len(obj)
+		header.uncompressedBlockLengthArray.append(arrLength)
+		header.uncompressedByteArrays.append(obj)
+		header.blockCount += 1
 	# I think only strings can have flags attached to them.
 	elif type(obj) is str or isinstance(obj, kv3.flagged_value):
 		strVal = obj
