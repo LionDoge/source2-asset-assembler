@@ -229,6 +229,7 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 		for length in compressedLengths:
 			blockDataUncompressed += length.to_bytes(2, "little")
 	# values tested based on 2v2_enable.vpulse_c
+	blockDataUncompressed += blockEndTrailer
 	blockDataCompressed = lz4.block.compress(blockDataUncompressed, mode='high_compression',compression=11,store_size=False) 
 	# we need to note both sizes.
 	uncompressedSize = len(blockDataUncompressed).to_bytes(4, "little")
@@ -243,7 +244,7 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 							headerData.blockCount.to_bytes(4, "little"), blockTotalSize.to_bytes(4, "little")])
 	if kv3version == 4:
 		blockDataBase += countOfTwoByteValues.to_bytes(4, "little") + unknown.to_bytes(4, "little")
-	header_info.size = len(blockDataBase + blockDataCompressed) + len(rawBlockBytes) + len(blockEndTrailer)
+	header_info.size = len(blockDataBase + blockDataCompressed) + len(rawBlockBytes)
 	if g_isVerbose:
 		print(f"Stats for {visualName} block (UUID: {str(UUID(bytes_le=guid))}):")
 		print(f"countOfStrings: {headerData.countOfStrings} | len(strings): {len(headerData.strings)}")
@@ -257,7 +258,7 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 		print(f"blockTotalSize: {blockTotalSize}")
 		print(f"Final block size: {header_info.size}\n")
 
-	return b''.join([blockDataBase, blockDataCompressed, rawBlockBytes, blockEndTrailer])
+	return b''.join([blockDataBase, blockDataCompressed, rawBlockBytes])
 
 def debugWriteListToFile(name, list):
 	file = open(name, "w")
