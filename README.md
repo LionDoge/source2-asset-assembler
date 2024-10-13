@@ -15,7 +15,7 @@ This tool is meant to allow editing of such assets, or creating new ones from sc
 
 ### TODO
 - [ ] Support more asset types / KV3 versions
-- [ ] Allow binary data to be used as input
+- [x] Allow binary data to be used as input
 - [ ] vxml layout content compiler
 - [ ] `--watch` parameter to recompile asset right after saving
 - [ ] filelist input
