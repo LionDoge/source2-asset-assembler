@@ -47,10 +47,10 @@ class FileHeaderInfo:
 
 @dataclass
 class FileBlock:
-	data: any
-	dataProcessed: bool
 	type: str
 	name: str
+	dataProcessed: bool = False
+	data: bytes = b''
 
 @dataclass
 class KVBaseData:
@@ -111,6 +111,9 @@ def buildFileData(version: int, headerVersion: int, blocks: list[FileBlock]) -> 
 				blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, 3, visualName=block.name)
 			elif block.type == "text":
 				blockData = buildTextBlock(block.data, blockHeaderInfo, visualName=block.name)
+			elif block.type == "rerl":
+				blockData = buildRERLBlock(block.data, visualName=block.name)
+				blockHeaderInfo.size = len(blockData)
 			else:
 				usingExistingData = True
 				blockData = block.data
@@ -144,6 +147,27 @@ def buildFileData(version: int, headerVersion: int, blocks: list[FileBlock]) -> 
 	return binData
 
 KV3_FORMAT_GUID = b'\x7C\x16\x12\x74\xE9\x06\x98\x46\xAF\xF2\xE6\x3E\xB5\x90\x37\xE7'
+
+def buildRERLBlock(rerlData: list[tuple[int, str]], visualName: str = "RERL") -> bytes:
+	offset = 8 # seems to be always the same
+	size = len(rerlData)
+	idDataSize = 8 + 16 * size
+	binStrings: bytes = b''
+	currentStringOffset = idDataSize
+
+	baseData = b''.join([offset.to_bytes(4, 'little'), size.to_bytes(4, 'little')])
+	for entry in rerlData:
+		baseData += entry[0].to_bytes(8, "little") + currentStringOffset.to_bytes(4, "little")
+		currentStringOffset += len(entry[1]) + 1 # null terminator
+		binStrings += entry[1].encode('ascii') + b'\x00'
+	
+	printDebug(f"Stats for {visualName} block")
+	printDebug(f"Entry count: {size}")
+	printDebug(f"IDs and offsets size: {idDataSize}")
+	printDebug(f"Strings size: {len(binStrings)}")
+	printDebug(f"Final block size: {len(baseData) + len(binStrings)}")
+
+	return b''.join([baseData, binStrings])
 
 def buildTextBlock(textData, textHeaderInfo, visualName: str = "unnamed block") -> bytes:
 	textHeaderInfo.size = len(textData)
@@ -486,6 +510,22 @@ class AssetInfo:
 	headerVersion: int
 	blocks: list[FileBlock] # will not contain data, only type and name.
 
+def readRERLTextFile(file: Path | str) -> list[tuple[int, str]]:
+	entries = []
+	with open(file, "r", encoding="ascii") as f:
+		for line in f:
+			line = line.strip()
+			if not line:
+				continue
+			parts = line.split(maxsplit=1)
+			if len(parts) == 2:
+				id = int(parts[0])
+				asset = parts[1]
+				entries.append((id, asset))
+			else:
+				raise ValueError(f"RERL: Invalid line format: {line} (expected <id> <asset>)")
+	return entries
+
 def readBytesFromFile(file: Path | str, type: str) -> bytes:
 	try:
 		fileData: bytes = None
@@ -497,13 +537,15 @@ def readBytesFromFile(file: Path | str, type: str) -> bytes:
 		elif type == "bin":
 			with open(file, "rb") as f:
 				fileData = f.read()
+		elif type == "rerl":
+			fileData = readRERLTextFile(file)
 		else:
 			raise ValueError("Unsupported file type: " + type)
 		return fileData
 	except FileNotFoundError as e:
 		raise
 # Not the prettiest, we might switch to a library later on.
-SUPPORTED_TYPES = ["kv3", "kv3v3", "kv3v4", "text", "bin"]
+SUPPORTED_TYPES = ["kv3", "kv3v3", "kv3v4", "text", "bin", "rerl"]
 def validateJsonStructure(loadedData):
 	if loadedData is None:
 		raise ValueError("empty or invalid.")
@@ -580,20 +622,24 @@ def parseJsonStructure(file: str):
 
 assetPresetInfo = {
 	"vpulse": AssetInfo(version=0, headerVersion=12, blocks=[
-		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
-		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
+		FileBlock(type="kv3", name="RED2"),
+		FileBlock(type="kv3", name="DATA")
 	]),
 	"vrr": AssetInfo(version=9, headerVersion=12, blocks=[
-		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
-		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
+		FileBlock(type="kv3", name="RED2"),
+		FileBlock(type="kv3", name="DATA")
 	]),
 	"cs2vanmgrph": AssetInfo(version=0, headerVersion=12, blocks=[
-		FileBlock(type="kv3", name="RED2", data=None, dataProcessed=False),
-		FileBlock(type="kv3", name="DATA", data=None, dataProcessed=False)
+		FileBlock(type="kv3", name="RED2"),
+		FileBlock(type="kv3", name="DATA")
 	]),
 	"smartprop": AssetInfo(version=0, headerVersion=12, blocks=[
-		FileBlock(type="kv3v3", name="RED2", data=None, dataProcessed=False),
-		FileBlock(type="kv3v3", name="DATA", data=None, dataProcessed=False)
+		FileBlock(type="kv3v3", name="RED2"),
+		FileBlock(type="kv3v3", name="DATA")
+	]),
+	"vents": AssetInfo(version=0, headerVersion=12, blocks=[
+		FileBlock(type="kv3", name="RED2"),
+		FileBlock(type="kv3", name="DATA")
 	]),
 }
 # This section should probably be redone and reuse pre-defined JSONs as templates.
@@ -662,7 +708,11 @@ def readAssetFile(file: Path | str, includeData: bool = False) -> AssetInfo:
 				currentOffset = f.tell()
 				f.seek(blockOffset - 8, os.SEEK_CUR)
 
-				blockType = getFileType(f, blockSize)
+				blockType = ""
+				if blockName == "RERL":
+					blockType = "rerl"
+				else:
+					blockType = getFileType(f, blockSize)
 				f.seek(-4, os.SEEK_CUR)
 				blockData = None
 				dataProcessed = False
