@@ -212,16 +212,20 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 	compressedLengths: list[int] = []
 	rawBlockBytes: bytes = b''
 	for arr in headerData.uncompressedByteArrays:
+		if len(arr) == 0:
+			continue
 		compressedBytes = lz4.block.compress(bytes(arr),compression=11,store_size=False)
 		compressedLen = len(compressedBytes)
-		if compressedLen > 0:
-			compressedLengths.append(compressedLen)
+		compressedLengths.append(compressedLen)
 		rawBlockBytes += compressedBytes
+	rawBlockBytes += blockEndTrailer
 
 	blockDataUncompressed = b''.join([headerData.binaryBytes, headerData.countOfStrings.to_bytes(4, "little"),
 								  	bytes(kvData), doublesBytes, b''.join(stringsBytesList), bytes(headerData.types),
 									])
-	if headerData.blockCount > 0:
+	if headerData.blockCount == 0:
+		blockDataUncompressed += blockEndTrailer
+	else:
 		for length in headerData.uncompressedBlockLengthArray:
 			blockDataUncompressed += length.to_bytes(4, "little")
 			blockTotalSize += length
@@ -229,7 +233,6 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 		for length in compressedLengths:
 			blockDataUncompressed += length.to_bytes(2, "little")
 	# values tested based on 2v2_enable.vpulse_c
-	blockDataUncompressed += blockEndTrailer
 	blockDataCompressed = lz4.block.compress(blockDataUncompressed, mode='high_compression',compression=11,store_size=False) 
 	# we need to note both sizes.
 	uncompressedSize = len(blockDataUncompressed).to_bytes(4, "little")
