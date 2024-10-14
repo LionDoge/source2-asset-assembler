@@ -13,6 +13,16 @@ import lz4.frame
 import os
 from copy import copy, deepcopy
 
+class AssetReadError(Exception):
+    def __init__(self, message: str, filePath: Path | str):            
+        super().__init__(message)
+        self.filePath = filePath
+
+class FileFormattingError(Exception):
+	def __init__(self, message: str, line: int):
+		super().__init__(message)
+		self.line = line
+
 class KVType(IntEnum):
 	STRING_MULTI = 0,
 	NULL = 1,
@@ -153,12 +163,12 @@ def buildRERLBlock(rerlData: list[tuple[int, str]], visualName: str = "RERL") ->
 	size = len(rerlData)
 	idDataSize = 8 + 16 * size
 	binStrings: bytes = b''
-	currentStringOffset = idDataSize
+	currentStringOffset = idDataSize - 16
 
 	baseData = b''.join([offset.to_bytes(4, 'little'), size.to_bytes(4, 'little')])
-	for entry in rerlData:
-		baseData += entry[0].to_bytes(8, "little") + currentStringOffset.to_bytes(4, "little")
-		currentStringOffset += len(entry[1]) + 1 # null terminator
+	for idx, entry in enumerate(rerlData):
+		baseData += entry[0].to_bytes(8, "little") + currentStringOffset.to_bytes(8, "little")
+		currentStringOffset += len(entry[1]) + 1 - 16 # null terminator, and accounting for the placment of the value itself in file.
 		binStrings += entry[1].encode('ascii') + b'\x00'
 	
 	printDebug(f"Stats for {visualName} block")
@@ -510,20 +520,28 @@ class AssetInfo:
 	headerVersion: int
 	blocks: list[FileBlock] # will not contain data, only type and name.
 
-def readRERLTextFile(file: Path | str) -> list[tuple[int, str]]:
+def readRERLTextFile(content: str) -> list[tuple[int, str]]:
 	entries = []
-	with open(file, "r", encoding="ascii") as f:
-		for line in f:
+	currentLine = 0
+	try:
+		for idx, line in enumerate(content.splitlines()):
+			currentLine = idx + 1
 			line = line.strip()
 			if not line:
 				continue
 			parts = line.split(maxsplit=1)
 			if len(parts) == 2:
 				id = int(parts[0])
+				if id < 0:
+					raise FileFormattingError(f"RERL: ID must be a positive integer", currentLine)
 				asset = parts[1]
 				entries.append((id, asset))
 			else:
-				raise ValueError(f"RERL: Invalid line format: {line} (expected <id> <asset>)")
+				raise FileFormattingError(f"RERL: Invalid line format: {currentLine} (expected <id (integer)> <asset (string)>)")
+	except FileFormattingError as e:
+		raise e
+	except ValueError as e: # catch int conversion error
+		raise FileFormattingError(f"RERL: First value in a line must be an integer", currentLine)
 	return entries
 
 def readBytesFromFile(file: Path | str, type: str) -> bytes:
@@ -538,12 +556,18 @@ def readBytesFromFile(file: Path | str, type: str) -> bytes:
 			with open(file, "rb") as f:
 				fileData = f.read()
 		elif type == "rerl":
-			fileData = readRERLTextFile(file)
+			with open(file, "r") as f:
+				fileData = readRERLTextFile(f.read())
 		else:
 			raise ValueError("Unsupported file type: " + type)
 		return fileData
-	except FileNotFoundError as e:
-		raise
+	except (FileNotFoundError, ValueError) as e:
+		raise e
+	except (FileFormattingError) as e:
+		raise AssetReadError(f"Failed to read file: {e} | line {e.line}", file)
+	except (kv3.KV3DecodeError, kv3.InvalidKV3Magic) as e:
+		raise AssetReadError(f"Failed to read KV3: {e}", file)
+
 # Not the prettiest, we might switch to a library later on.
 SUPPORTED_TYPES = ["kv3", "kv3v3", "kv3v4", "text", "bin", "rerl"]
 def validateJsonStructure(loadedData):
@@ -615,10 +639,10 @@ def parseJsonStructure(file: str):
 		raise FileNotFoundError(f"Failed to open file defined in JSON block {str(currentBlock)}: {e}")
 	except json.JSONDecodeError as e:
 		raise json.JSONDecodeError("Failed to parse JSON structure file: "+str(e))
-	except kv3.KV3DecodeError as e:
-		raise kv3.KV3DecodeError("Failed to parse KV3 file: "+str(e))
 	except ValueError as e:
 		raise ValueError("JSON structure file " + str(e))
+	except AssetReadError as e:
+		raise e
 
 assetPresetInfo = {
 	"vpulse": AssetInfo(version=0, headerVersion=12, blocks=[
@@ -655,10 +679,12 @@ def buildAssetFromPreset(preset: str, files: list[str]) -> bytes:
 			fullPath = Path(files[idx]).resolve()
 			block.data = readBytesFromFile(fullPath, block.type)
 		return buildFileData(assetInfoAndData.version, assetInfoAndData.headerVersion, assetInfoAndData.blocks)
-	except kv3.KV3DecodeError as e:
-		raise
+	except (kv3.KV3DecodeError, ValueError, AssetReadError) as e:
+		raise e
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"One of the specified files doesn't exist: {e}")
+	except AssetReadError as e:
+		raise e
 	
 def editAssetFile(file: Path | str, replacementData: list[FileBlock]) -> AssetInfo:
 	try:
@@ -729,7 +755,7 @@ def readAssetFile(file: Path | str, includeData: bool = False) -> AssetInfo:
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"Failed to open file: {e}")
 	except struct.error as e:
-		raise ValueError(f"Failed to deserialize file: {e} it might not be a valid asset.")
+		raise AssetReadError(f"Failed to deserialize file: {e} it might not be a valid asset.", file)
 
 g_isVerbose = False
 def printDebug(msg):
@@ -831,6 +857,9 @@ if __name__ == "__main__":
 			sys.exit(0)
 	except (FileNotFoundError, ValueError) as e: # let's not handle json and kv3 errors, it might be useful to get a full call stack.
 		print("ERROR: " + str(e) + "\nAsset was not processed.")
+		sys.exit(1)
+	except AssetReadError as e:
+		print(f"ERROR: {e}\n...in file {e.filePath}")
 		sys.exit(1)
 	try:
 		with open(args.output, "wb") as f:

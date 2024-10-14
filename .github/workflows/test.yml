@@ -30,5 +30,7 @@ jobs:
         token: ${{ secrets.GH_TOKEN }}
     - name: Run test
       run: |
-        pytest tests/main_test.py
+        export PYTHONPATH=$(pwd)
+        pytest tests/test_readers.py
+        pytest tests/test_writers.py
         python tests/recomp_test.py
