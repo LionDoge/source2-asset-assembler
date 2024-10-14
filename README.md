@@ -56,11 +56,16 @@ The `info` block contains the information stored at the very beginning of the as
 
 The `blocks` section contains an array of blocks that are part of the asset. Every object contains the following parameters:
 
-- `type` - type of data stored, supported values right now are: `kv3v4`, `kv3v3` or `kv3` (which will default to binary v4) plain text: `text`, and generic binary data: `bin`
+- `type` - type of data stored, supported values right now are: `kv3v4`, `kv3v3` or `kv3` (which will default to binary v4) plain text: `text`, resource external info (`rerl`) and generic binary data: `bin`
 - `name` - name of the block (as can be seen in Source 2 Viewer). It must be a **4 letter ASCII string**.
 - `file` - the source file to use for this block's data. File path is **relative** to the directory of the JSON file.
 
 To use a schema file for compilation use the `-s` or `--schema` parameter with the relative path and file name to the schema file. Like with every method, specifying the output file with `-o` or `--output` is also required.
+
+### RERL source file
+Entries can be defined in the following format
+`<ID (positive integer)> <asset name (string)>`
+each next entry is separated by a newline
 
 ### Preset usage
 It's also possible to use a ready to go preset for some asset types.
