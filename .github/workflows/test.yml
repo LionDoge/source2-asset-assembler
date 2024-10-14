@@ -31,6 +31,5 @@ jobs:
     - name: Run test
       run: |
         export PYTHONPATH=$(pwd)
-        pytest tests/test_readers.py
-        pytest tests/test_writers.py
+        pytest
         python tests/recomp_test.py
