@@ -537,7 +537,7 @@ def readRERLTextFile(content: str) -> list[tuple[int, str]]:
 				asset = parts[1]
 				entries.append((id, asset))
 			else:
-				raise FileFormattingError(f"RERL: Invalid line format: {currentLine} (expected <id (integer)> <asset (string)>)")
+				raise FileFormattingError(f"RERL: Invalid line format (expected <id (integer)> <asset (string)>)", currentLine)
 	except FileFormattingError as e:
 		raise e
 	except ValueError as e: # catch int conversion error
@@ -561,12 +561,12 @@ def readBytesFromFile(file: Path | str, type: str) -> bytes:
 		else:
 			raise ValueError("Unsupported file type: " + type)
 		return fileData
+	except (kv3.KV3DecodeError, kv3.InvalidKV3Magic) as e:
+		raise AssetReadError(f"{e}", file)
 	except (FileNotFoundError, ValueError) as e:
 		raise e
 	except (FileFormattingError) as e:
-		raise AssetReadError(f"Failed to read file: {e} | line {e.line}", file)
-	except (kv3.KV3DecodeError, kv3.InvalidKV3Magic) as e:
-		raise AssetReadError(f"Failed to read KV3: {e}", file)
+		raise AssetReadError(f"Failed to read file: {e} at line {e.line}", file)
 
 # Not the prettiest, we might switch to a library later on.
 SUPPORTED_TYPES = ["kv3", "kv3v3", "kv3v4", "text", "bin", "rerl"]
@@ -618,6 +618,7 @@ def validateJsonStructure(loadedData):
 				raise ValueError("'file' must be a string, in block no. " + str(idx+1))
 
 def parseJsonStructure(file: str):
+	currentBlock = 1 # for error messages
 	try:
 		with open(file, "r") as f:
 			data = json.load(f)
@@ -625,7 +626,7 @@ def parseJsonStructure(file: str):
 			version = data['info']['version']
 			headerVersion = data['info']['headerversion']
 			blocks = []
-			currentBlock = 1 # for error messages
+			
 			for block in data['blocks']:
 				block['type'] = block['type'].lower()
 				fileData = None
