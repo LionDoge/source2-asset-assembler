@@ -703,11 +703,12 @@ def getFileType(file, size) -> str:
 	startPos = file.tell()
 	if(size >= 4):
 		magic = struct.unpack("<I", file.read(4))[0]
+		file.seek(startPos, os.SEEK_SET)
 		if magic == 1263940356:
 			return "kv3v4"
 		elif magic == 1263940355:
 			return "kv3v3"
-	file.seek(startPos, os.SEEK_SET)
+	# guess between text or binary based on data.
 	bytes = file.read(size)
 	global cachedReadData
 	cachedReadData = bytes
@@ -740,7 +741,6 @@ def readAssetFile(file: Path | str, includeData: bool = False) -> AssetInfo:
 					blockType = "rerl"
 				else:
 					blockType = getFileType(f, blockSize)
-				f.seek(-4, os.SEEK_CUR)
 				blockData = None
 				dataProcessed = False
 				if includeData:
