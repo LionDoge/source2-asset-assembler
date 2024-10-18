@@ -13,10 +13,14 @@ import lz4.frame
 import os
 from copy import copy, deepcopy
 
-class AssetReadError(Exception):
+class AssetReadErrorGeneric(Exception):
     def __init__(self, message: str, filePath: Path | str):            
         super().__init__(message)
         self.filePath = filePath
+
+class AssetReadError(AssetReadErrorGeneric):
+	def __init__(self, message: str, filePath: Path | str):
+		super().__init__(message, filePath)
 
 class FileFormattingError(Exception):
 	def __init__(self, message: str, line: int):
@@ -561,10 +565,8 @@ def readBytesFromFile(file: Path | str, type: str) -> bytes:
 		else:
 			raise ValueError("Unsupported file type: " + type)
 		return fileData
-	except (kv3.KV3DecodeError, kv3.InvalidKV3Magic) as e:
-		raise AssetReadError(f"{e}", file)
-	except (FileNotFoundError, ValueError) as e:
-		raise e
+	except (kv3.KV3DecodeError, kv3.InvalidKV3Magic, FileNotFoundError, ValueError) as e:
+		raise AssetReadErrorGeneric(f"{e}", file)
 	except (FileFormattingError) as e:
 		raise AssetReadError(f"Failed to read file: {e} at line {e.line}", file)
 
@@ -642,7 +644,7 @@ def parseJsonStructure(file: str):
 		raise json.JSONDecodeError("Failed to parse JSON structure file: "+str(e))
 	except ValueError as e:
 		raise ValueError("JSON structure file " + str(e))
-	except AssetReadError as e:
+	except (AssetReadError, AssetReadErrorGeneric) as e:
 		raise e
 
 assetPresetInfo = {
@@ -680,12 +682,10 @@ def buildAssetFromPreset(preset: str, files: list[str]) -> bytes:
 			fullPath = Path(files[idx]).resolve()
 			block.data = readBytesFromFile(fullPath, block.type)
 		return buildFileData(assetInfoAndData.version, assetInfoAndData.headerVersion, assetInfoAndData.blocks)
-	except (kv3.KV3DecodeError, ValueError, AssetReadError) as e:
+	except (kv3.KV3DecodeError, ValueError, AssetReadError, AssetReadErrorGeneric) as e:
 		raise e
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"One of the specified files doesn't exist: {e}")
-	except AssetReadError as e:
-		raise e
 	
 def editAssetFile(file: Path | str, replacementData: list[FileBlock]) -> AssetInfo:
 	try:
@@ -864,6 +864,10 @@ if __name__ == "__main__":
 			sys.exit(0)
 	except (FileNotFoundError, ValueError) as e: # let's not handle json and kv3 errors, it might be useful to get a full call stack.
 		print("ERROR: " + str(e) + "\nAsset was not processed.")
+		sys.exit(1)
+	except AssetReadErrorGeneric as e:
+		print(f"ERROR: Failed to read input file \"{e.filePath}\":\n\t {e}")
+		print("It is possible that the file does not match the block data type.")
 		sys.exit(1)
 	except AssetReadError as e:
 		print(f"ERROR: {e}\n...in file {e.filePath}")
