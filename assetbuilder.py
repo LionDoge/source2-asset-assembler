@@ -811,6 +811,12 @@ if __name__ == "__main__":
 				print("--base argument requires a compiled asset file.")
 				sys.exit(1)
 			assetInfo = readAssetFile(args.base)
+			if len(assetInfo.blocks) != len(args.files):
+				print(f"Amount of files provided ({len(args.files)}) doesn't match the amount of blocks in the input file ({len(assetInfo.blocks)}).")
+				sys.exit(1)
+			for idx, file in enumerate(args.files):
+				fullPath = Path(file).resolve()
+				assetInfo.blocks[idx].data = readBytesFromFile(fullPath, assetInfo.blocks[idx].type)
 			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
 		elif args.edit is not None:
 			if(args.edit[0].endswith("_c") == False):
