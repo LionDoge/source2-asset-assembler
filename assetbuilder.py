@@ -64,7 +64,7 @@ class FileBlock:
 	type: str
 	name: str
 	dataProcessed: bool = False
-	data: bytes = b''
+	data: bytes = None
 
 @dataclass
 class KVBaseData:
@@ -601,6 +601,8 @@ def validateJsonStructure(loadedData):
 		blocks = loadedData['blocks']
 		if not isinstance(blocks, list):
 			raise ValueError("'blocks' must be a list.")
+		if len(blocks) == 0:
+			raise ValueError("empty 'blocks' list")
 		for idx, block in enumerate(blocks):
 			if 'type' not in block:
 				raise ValueError("missing 'type' key in block no. " + str(idx+1))
@@ -619,25 +621,23 @@ def validateJsonStructure(loadedData):
 			if not isinstance(block['file'], str):
 				raise ValueError("'file' must be a string, in block no. " + str(idx+1))
 
-def parseJsonStructure(file: str):
+def parseJsonStructure(data: str, sourcePath: Path) -> AssetInfo:
 	currentBlock = 1 # for error messages
 	try:
-		with open(file, "r") as f:
-			data = json.load(f)
-			validateJsonStructure(data) # will raise errors if something is wrong.
-			version = data['info']['version']
-			headerVersion = data['info']['headerversion']
-			blocks = []
-			
-			for block in data['blocks']:
-				block['type'] = block['type'].lower()
-				fileData = None
-				# search relative to the JSON file
-				fullPath = (Path(file).parents[0] / Path(block['file'])).resolve()
-				fileData = readBytesFromFile(fullPath, block['type'])
-				blocks.append(FileBlock(data=fileData, type=block['type'], name=block['name'], dataProcessed=False))
-				currentBlock += 1
-			return AssetInfo(version, headerVersion, blocks)
+		validateJsonStructure(data) # will raise errors if something is wrong.
+		version = data['info']['version']
+		headerVersion = data['info']['headerversion']
+		blocks = []
+		
+		for block in data['blocks']:
+			block['type'] = block['type'].lower()
+			fileData = None
+			# search relative to the JSON file
+			fullPath = (sourcePath / Path(block['file'])).resolve()
+			fileData = readBytesFromFile(fullPath, block['type'])
+			blocks.append(FileBlock(data=fileData, type=block['type'], name=block['name'], dataProcessed=False))
+			currentBlock += 1
+		return AssetInfo(version, headerVersion, blocks)
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"Failed to open file defined in JSON block {str(currentBlock)}: {e}")
 	except json.JSONDecodeError as e:
@@ -758,6 +758,37 @@ def readAssetFile(file: Path | str, includeData: bool = False) -> AssetInfo:
 	except struct.error as e:
 		raise AssetReadError(f"Failed to deserialize file: {e} it might not be a valid asset.", file)
 
+def matchBlockIndexFromString(assetInfo: AssetInfo, blockStr: str) -> int:
+	userBlockIndex = -1 # -1 means that user didn't provide the index, we may have to warn in this case.
+	if(len(blockStr) > 4):
+		# try to extract the block index
+		try:
+			userBlockIndex = int(blockStr[4:])
+			if userBlockIndex < 0:
+				raise ValueError("Invalid block index provided.")
+			blockStr = blockStr[:4]
+		except ValueError as e:
+			raise ValueError(f"Invalid block name syntax provided: '{blockStr}' a number was expected after the 4 letter block name.")
+	blockIdx: int = -1
+	matchCount = 0
+	for currIdx, block in enumerate(assetInfo.blocks):
+		if block.name != blockStr:
+			continue
+		if userBlockIndex >= 0:
+			if userBlockIndex == matchCount:
+				blockIdx = currIdx
+				break
+		else:
+			blockIdx = currIdx
+		matchCount += 1
+		if matchCount > 1 and userBlockIndex < 0:
+			raise ValueError(f"Block {blockStr} exists multiple times, an index number must be provided after the name to target a specific block\n"
+			f"Example: {blockStr}0 to target the first one {blockStr}1 for second one, and so on.")
+	if blockIdx == -1:
+		raise ValueError(f"Block {blockStr}" + (f" (idx={userBlockIndex})" if userBlockIndex > 0 else "") + " was not found in the input file.")
+	printDebug("matched input block index: " + str(blockIdx))
+	return blockIdx
+
 g_isVerbose = False
 def printDebug(msg):
 	if g_isVerbose:
@@ -797,7 +828,10 @@ if __name__ == "__main__":
 	binaryData = None
 	try:
 		if args.schema is not None: # we are using a schema JSON file
-			structure = parseJsonStructure(args.schema)
+			f = open(args.schema, "r")
+			data = json.load(f)
+			f.close()
+			structure = parseJsonStructure(data, Path(args.schema))
 			printDebug(f"Using schema file: {args.schema}")
 			binaryData = buildFileData(structure.version, structure.headerVersion, structure.blocks)
 		elif args.preset is not None:
@@ -826,36 +860,8 @@ if __name__ == "__main__":
 			maxBlocks: int = len(args.edit) - 1
 			for idx, file in enumerate(args.files):
 				currBlock = args.edit[idx+1]
-				userBlockIndex = -1 # -1 means that user didn't provide the index, we may have to warn in this case.
-				if(len(currBlock) > 4):
-					# try to extract the block index
-					try:
-						userBlockIndex = int(currBlock[4:])
-						if userBlockIndex < 0:
-							raise ValueError("Invalid block index provided.")
-						currBlock = currBlock[:4]
-					except ValueError as e:
-						raise ValueError(f"Invalid block name syntax provided: '{currBlock}' a number is expected after the 4 letter block name.")
-				blockIdx: int = -1
-				matchCount = 0
-				for currIdx, block in enumerate(assetInfo.blocks):
-					if block.name == currBlock:
-						if userBlockIndex >= 0:
-							if userBlockIndex == matchCount:
-								blockIdx = currIdx
-								break
-						else:
-							blockIdx = currIdx
-
-						matchCount += 1
-						if matchCount > 1 and userBlockIndex < 0:
-							print(f"Block {currBlock} exists multiple times, provide an index number after the name to specify which one to replace.\n"
-							f"Example: {currBlock}0 to target the first one {currBlock}1 for second one, and so on.")
-							sys.exit(1)
-				if blockIdx == -1:
-					raise ValueError(f"Block {currBlock}" + (f" (idx={userBlockIndex})" if userBlockIndex > 0 else "") + " was not found in the input file.")
-				printDebug("matched input block index: " + str(blockIdx))
 				fullPath = Path(file).resolve()
+				blockIdx = matchBlockIndexFromString(assetInfo, currBlock)
 				assetInfo.blocks[blockIdx].data = readBytesFromFile(fullPath, assetInfo.blocks[blockIdx].type)
 				assetInfo.blocks[blockIdx].dataProcessed = False # we need to reprocess the data.
 			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
