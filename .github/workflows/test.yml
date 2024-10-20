@@ -1,4 +1,4 @@
-name: Asset compile and decompile validation
+name: Tests
 
 on: [pull_request, push]
 
