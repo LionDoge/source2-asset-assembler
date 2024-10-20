@@ -914,9 +914,8 @@ if __name__ == "__main__":
 				outFile = outDir / args.output
 		else:
 			outFile = args.output
-			print("NOT using game dir")
 		with open(outFile, "wb") as f:
-			printDebug(f"Writing output file: {outFile}")
+			print(f"Writing output file: {outFile}")
 			f.write(binaryData)
 	except Exception as e:
 		print("Failed to write output file: " + str(e))
