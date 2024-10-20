@@ -789,6 +789,28 @@ def matchBlockIndexFromString(assetInfo: AssetInfo, blockStr: str) -> int:
 	printDebug("matched input block index: " + str(blockIdx))
 	return blockIdx
 
+def tryGetGameDirectoryFromContent(path: Path) -> Path | None:
+	if "content" not in path.parts:
+		return None
+	
+	contentIdx = path.parts.index("content")
+	if contentIdx + 1 >= len(path.parts): # if there's not another folder after the content one
+		return None
+	
+	partList = list(path.parts)
+	addonName = partList[contentIdx + 1]
+	reducedDir = partList[:contentIdx + 1]
+	reducedDir[contentIdx] = "game"
+	gameDir = Path(*reducedDir, addonName)
+	if not gameDir.exists():
+		return None
+	# if valid game directory exists then resolve the full path.
+	partList[contentIdx] = "game"
+	fullPath = Path(*partList)
+	fullPath.mkdir(parents=True, exist_ok=True)
+	return fullPath
+		
+
 g_isVerbose = False
 def printDebug(msg):
 	if g_isVerbose:
@@ -819,7 +841,7 @@ if __name__ == "__main__":
 					 help="List of files to use, only to be used with -b or -p, amount of files depends on the structure of the base file/preset that was specified",
 					 type=str, nargs="+", metavar="<file1> <file2> ...")
 	parser.add_argument("-o", "--output",
-					 help="Output file name",
+					 help="Output file name or path",
 					 type=str, metavar="<output file>", required=True)
 	
 	args = parser.parse_args()
@@ -879,8 +901,22 @@ if __name__ == "__main__":
 		print(f"ERROR: {e}\n...in file {e.filePath}")
 		sys.exit(1)
 	try:
-		with open(args.output, "wb") as f:
-			printDebug(f"Writing output file: {args.output}")
+		outFile: str = ""
+		# we will check if any path was provided (even './'), if not, we will try to automatically grab the game directory, and use the provided filename.
+		# otherwise we will use the full provided path for the output.
+		fullPath = Path(args.output)
+		if args.output == fullPath.as_posix():
+			outDir = tryGetGameDirectoryFromContent(Path(os.getcwd()))
+			# if only filename given, but not in a valid content dir, then output to CWD
+			if(outDir is None):
+				outFile = Path(os.getcwd()) / args.output
+			else:
+				outFile = outDir / args.output
+		else:
+			outFile = args.output
+			print("NOT using game dir")
+		with open(outFile, "wb") as f:
+			printDebug(f"Writing output file: {outFile}")
 			f.write(binaryData)
 	except Exception as e:
 		print("Failed to write output file: " + str(e))
