@@ -2,6 +2,8 @@ name: Tests
 
 on: [pull_request, push]
 
+env:
+  DECOMPILER_VERSION: 10.1
 permissions:
   contents: read
 
@@ -14,16 +16,23 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.12.5"
+        cache: "pip"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         pip install pytest
+    - name: Cache decompiler
+      id: cache-decompiler
+      uses: actions/cache@v3
+      with:
+        path: ./Decompiler
+        key: ${{ runner.os }}-test-decompiler-${{ env.DECOMPILER_VERSION }}
     - name: Download decompiler
       uses: robinraju/release-downloader@v1
       with:
         repository: 'ValveResourceFormat/ValveResourceFormat'
-        tag: '10.1'
+        tag: ${{ env.DECOMPILER_VERSION }}
         fileName: 'Decompiler-linux-x64.zip'
         zipBall: true
         extract: true
