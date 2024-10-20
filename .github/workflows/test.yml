@@ -31,5 +31,5 @@ jobs:
     - name: Run test
       run: |
         export PYTHONPATH=$(pwd)
+        chmod +x ./Decompiler
         pytest
-        python tests/recomp_test.py

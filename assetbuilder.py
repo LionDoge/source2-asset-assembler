@@ -831,7 +831,7 @@ if __name__ == "__main__":
 			f = open(args.schema, "r")
 			data = json.load(f)
 			f.close()
-			structure = parseJsonStructure(data, Path(args.schema))
+			structure = parseJsonStructure(data, Path(args.schema).parents[0])
 			printDebug(f"Using schema file: {args.schema}")
 			binaryData = buildFileData(structure.version, structure.headerVersion, structure.blocks)
 		elif args.preset is not None:

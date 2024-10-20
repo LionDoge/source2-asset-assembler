@@ -6,8 +6,13 @@
     "blocks": [
         {
             "type": "kv3",
+            "name": "RED2",
+            "file": "red2.kv3"
+        },
+        {
+            "type": "kv3",
             "name": "DATA",
-            "file": "binary.kv3"
+            "file": "data.kv3"
         }
     ]
 }
