@@ -70,3 +70,43 @@ def test_usageWithEdit(tmp_path):
     originalFile = kv3.read("tests/files/samples/edited.kv3")
     decompiledFile = kv3.read(decompiledName)
     assert originalFile == decompiledFile
+
+# these are more specific to just testing kv3 files
+def test_kv3FlagsValidity(tmp_path):
+    testInfo = Test(
+        ["-p", "vpulse", "-f", 
+         "tests/files/samples/red2.kv3", 
+         "tests/files/samples/data_withflags.kv3"],
+        0,
+        tmp_path / "pulsesample.vpulse_c"
+    )
+    decompiledName = testInfo.run()
+    originalFile = kv3.read("tests/files/samples/data_withflags.kv3")
+    decompiledFile = kv3.read(decompiledName)
+    assert originalFile == decompiledFile
+
+def test_kv3BlobsValidity(tmp_path):
+    testInfo = Test(
+        ["-p", "vpulse", "-f", 
+         "tests/files/samples/red2.kv3", 
+         "tests/files/samples/data_withblobs.kv3"],
+        0,
+        tmp_path / "pulsesample.vpulse_c"
+    )
+    decompiledName = testInfo.run()
+    originalFile = kv3.read("tests/files/samples/data_withblobs.kv3")
+    decompiledFile = kv3.read(decompiledName)
+    assert originalFile == decompiledFile
+
+def test_kv3ArraysValidity(tmp_path):
+    testInfo = Test(
+        ["-p", "vpulse", "-f", 
+         "tests/files/samples/red2.kv3", 
+         "tests/files/samples/data_witharrays.kv3"],
+        0,
+        tmp_path / "pulsesample.vpulse_c"
+    )
+    decompiledName = testInfo.run()
+    originalFile = kv3.read("tests/files/samples/data_witharrays.kv3")
+    decompiledFile = kv3.read(decompiledName)
+    assert originalFile == decompiledFile

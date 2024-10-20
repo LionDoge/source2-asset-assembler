@@ -1,0 +1,47 @@
+<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:vrfunknown:version{354e36cb-dbe4-41c0-8fe3-2279dd194022} -->
+{
+    a = [
+        true,
+        true,
+        true,
+    ]
+    b = [
+        true,
+        true,
+        false,
+    ]
+    c = [
+        0.0,
+        0.0,
+        0.0,
+    ]
+    d = [
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+    ]
+    e = [
+        "str1",
+        "str2",
+        "str3",
+    ]
+    f = [
+        "str1",
+        "str2",
+        resource_name:"str3",
+    ]
+    g = [
+        1,
+        1,
+        1,
+        1,
+    ]
+    h = [
+    ]
+    i = [
+        {},
+        {},
+        {},
+    ]
+}

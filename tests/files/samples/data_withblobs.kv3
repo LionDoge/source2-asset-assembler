@@ -1,0 +1,12 @@
+<!-- kv3 encoding:text:version{e21c7f3c-8a33-41c5-9977-a76d3a32aa0d} format:vrfunknown:version{354e36cb-dbe4-41c0-8fe3-2279dd194022} -->
+{
+    a = #[
+        DE AD BE EF DE AD C0 DE
+    ]
+
+    b = #[]
+
+    c = #[
+        AC CE 55 BA BE FA CE B0 55 DE ED 5E ED
+    ]
+}
