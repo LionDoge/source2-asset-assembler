@@ -28,7 +28,9 @@ jobs:
       with:
         path: ./Decompiler
         key: ${{ runner.os }}-test-decompiler-${{ env.DECOMPILER_VERSION }}
-    - name: Download decompiler
+
+    - if: ${{ steps.cache-decompiler.outputs.cache-hit != 'true' }}
+      name: Download decompiler
       uses: robinraju/release-downloader@v1
       with:
         repository: 'ValveResourceFormat/ValveResourceFormat'
