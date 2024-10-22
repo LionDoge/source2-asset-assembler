@@ -1,5 +1,6 @@
-from assetbuilder import AssetInfo, FileBlock, matchBlockIndexFromString, getFileType
+from assetbuilder import AssetInfo, FileBlock, matchBlockIndexFromString, getFileType, tryGetGameDirectoryFromContent
 import pytest
+from pathlib import Path
 @pytest.fixture
 def example_assetDataWithSameBlockNames():
     return AssetInfo(version=2, headerVersion=12, blocks=[
@@ -41,3 +42,31 @@ def test_guessTextFileTypeFromContents(tmp_path):
         f.write(contents)
     with open(tmp_path / "file", "rb") as f:
         assert getFileType(f, len(contents)) == "text"
+
+def test_contentCWDOutputsToGameDir(tmp_path):
+    p1 = Path(tmp_path / "content" / "citadel" / "something")
+    p1.mkdir(parents=True)
+    p2 = Path(tmp_path / "game" / "citadel")
+    p2.mkdir(parents=True)
+    assert tryGetGameDirectoryFromContent(p1) == p2 / "something"
+    
+def test_contentCWDWithoutValidGameDir(tmp_path):
+    p1 = Path(tmp_path / "content" / "citadel" / "something")
+    p1.mkdir(parents=True)
+    p2 = Path(tmp_path / "game" )
+    p2.mkdir(parents=True)
+    assert tryGetGameDirectoryFromContent(p1) == None
+
+def test_invalidContentCWDWithValidGameDir(tmp_path):
+    p1 = Path(tmp_path / "content")
+    p1.mkdir(parents=True)
+    p2 = Path(tmp_path / "game" / "citadel" )
+    p2.mkdir(parents=True)
+    assert tryGetGameDirectoryFromContent(p1) == None
+
+def test_randomCWDandGameDir(tmp_path):
+    p1 = Path(tmp_path / "something")
+    p1.mkdir(parents=True)
+    p2 = Path(tmp_path / "somethingelse" / "output" )
+    p2.mkdir(parents=True)
+    assert tryGetGameDirectoryFromContent(p1) == None
