@@ -3,7 +3,7 @@ name: Tests
 on: [pull_request, push]
 
 env:
-  DECOMPILER_VERSION: 10.1
+  DECOMPILER_VERSION: 11.1
 permissions:
   contents: read
 
