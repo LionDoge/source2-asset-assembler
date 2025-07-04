@@ -110,3 +110,14 @@ def test_kv3ArraysValidity(tmp_path):
     originalFile = kv3.read("tests/files/samples/data_witharrays.kv3")
     decompiledFile = kv3.read(decompiledName)
     assert originalFile == decompiledFile
+
+def test_kv3_VKV3_version(tmp_path):
+    testInfo = Test(
+        ["-s", "tests/files/samples/struct_vkv3.json"],
+        0,
+        tmp_path / "pulsesample.vpulse_c"
+    )
+    decompiledName = testInfo.run()
+    originalFile = kv3.read("tests/files/samples/data.kv3")
+    decompiledFile = kv3.read(decompiledName)
+    assert originalFile == decompiledFile

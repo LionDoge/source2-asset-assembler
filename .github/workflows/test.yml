@@ -3,7 +3,7 @@ name: Tests
 on: [pull_request, push]
 
 env:
-  DECOMPILER_VERSION: 11.1
+  DECOMPILER_VERSION: 10.0
 permissions:
   contents: read
 
@@ -31,7 +31,7 @@ jobs:
 
     - if: ${{ steps.cache-decompiler.outputs.cache-hit != 'true' }}
       name: Download decompiler
-      uses: robinraju/release-downloader@v1
+      uses: robinraju/release-downloader@v1.12
       with:
         repository: 'ValveResourceFormat/ValveResourceFormat'
         tag: ${{ env.DECOMPILER_VERSION }}
