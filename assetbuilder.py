@@ -9,8 +9,8 @@ from uuid import UUID
 import argparse
 import keyvalues3 as kv3
 import lz4.block
-import lz4.frame
 import os
+import io
 from copy import copy, deepcopy
 
 class AssetReadErrorGeneric(Exception):
@@ -119,10 +119,14 @@ def buildFileData(version: int, headerVersion: int, blocks: list[FileBlock]) -> 
 			usingExistingData = False
 			if block.type == "kv3" or block.type == "kv3v4":
 				blockUUID: UUID = block.data.format.version
-				blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, 4, visualName=block.name)
+				blockData = buildKVBlock(block.data, blockUUID, blockHeaderInfo, 4, visualName=block.name)
 			elif block.type == "kv3v3":
 				blockUUID: UUID = block.data.format.version
-				blockData = buildKVBlock(block.data, blockUUID.bytes_le, blockHeaderInfo, 3, visualName=block.name)
+				blockData = buildKVBlock(block.data, blockUUID, blockHeaderInfo, 3, visualName=block.name)
+			elif block.type == "vkv3":
+				usingExistingData = True
+				blockUUID: UUID = block.data.format.version
+				blockData = buildKVBlock(block.data, blockUUID, blockHeaderInfo, 1, visualName=block.name)
 			elif block.type == "text":
 				blockData = buildTextBlock(block.data, blockHeaderInfo, visualName=block.name)
 			elif block.type == "rerl":
@@ -189,11 +193,18 @@ def buildTextBlock(textData, textHeaderInfo, visualName: str = "unnamed block") 
 	printDebug(f"Text size: {textHeaderInfo.size}\n")
 	return textData
 
-def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName: str = "unnamed block") -> bytes:
+def buildKVBlock(block_data: kv3.KV3File, guid: UUID, header_info, kv3version: int = 4, visualName: str = "unnamed block") -> bytes:
+	if kv3version != 4 and kv3version != 3 and kv3version != 1:
+		raise NotImplementedError("Unsupported KV3 version: {kv3version}")
+	if kv3version == 1:
+		stream: io.BytesIO = io.BytesIO() 
+		kv3.write(block_data, stream, encoding = kv3.ENCODING_BINARY_BLOCK_LZ4, 
+			format = kv3.Format("generic", guid))
+		stream.seek(0)
+		return stream.read()
 	# The definitions at the beginning here are useless in terms of the functionality
 	# However I decided to keep them here in approperiate order to make it easier to understand the structure of the KV3 data.
-	if kv3version != 4 and kv3version != 3:
-		raise NotImplementedError("Unsupported KV3 version.")
+	
 	headerData = KVBaseData()
 	kv3ver = kv3version.to_bytes(1)
 	constantsAfterGUID = b'\x01\x00\x00\x00\x00\x00' # contains compressionMethod, compressionDictionaryID
@@ -275,7 +286,7 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 	# we need to note both sizes.
 	uncompressedSize = len(blockDataUncompressed).to_bytes(4, "little")
 	compressedSize = len(blockDataCompressed).to_bytes(4, "little")
-	blockDataBase = b''.join([kv3ver, "3VK".encode('ascii'), guid, constantsAfterGUID,
+	blockDataBase = b''.join([kv3ver, "3VK".encode('ascii'), guid.bytes_le, constantsAfterGUID,
 						   	compressionFrameSize.to_bytes(2, 'little'),
 						   	headerData.countOfBinaryBytes.to_bytes(4, 'little'),
 							headerData.countOfIntegers.to_bytes(4, 'little'),
@@ -287,7 +298,7 @@ def buildKVBlock(block_data, guid, header_info, kv3version: int = 4, visualName:
 		blockDataBase += countOfTwoByteValues.to_bytes(4, "little") + unknown.to_bytes(4, "little")
 	header_info.size = len(blockDataBase + blockDataCompressed) + len(rawBlockBytes)
 	if g_isVerbose:
-		print(f"Stats for {visualName} block (UUID: {str(UUID(bytes_le=guid))}):")
+		print(f"Stats for {visualName} block (UUID: {str(guid)}):")
 		print(f"countOfStrings: {headerData.countOfStrings} | len(strings): {len(headerData.strings)}")
 		print(f"countOfIntegers: {headerData.countOfIntegers}")
 		print(f"countOfDoubles: {headerData.countOfEightByteValues}")
@@ -551,7 +562,7 @@ def readRERLTextFile(content: str) -> list[tuple[int, str]]:
 def readBytesFromFile(file: Path | str, type: str) -> bytes:
 	try:
 		fileData: bytes = None
-		if type == "kv3" or type == "kv3v4" or type == "kv3v3":
+		if type.startswith("kv3") or type == "vkv3":
 			fileData = kv3.read(file)
 		elif type == "text":
 			with open(file, "r", encoding="utf-8") as f:
@@ -571,7 +582,7 @@ def readBytesFromFile(file: Path | str, type: str) -> bytes:
 		raise AssetReadError(f"Failed to read file: {e} at line {e.line}", file)
 
 # Not the prettiest, we might switch to a library later on.
-SUPPORTED_TYPES = ["kv3", "kv3v3", "kv3v4", "text", "bin", "rerl"]
+SUPPORTED_TYPES = ["kv3", "kv3v3", "kv3v4", "vkv3", "text", "bin", "rerl"]
 def validateJsonStructure(loadedData):
 	if loadedData is None:
 		raise ValueError("empty or invalid.")
@@ -641,7 +652,7 @@ def parseJsonStructure(data: str, sourcePath: Path) -> AssetInfo:
 	except FileNotFoundError as e:
 		raise FileNotFoundError(f"Failed to open file defined in JSON block {str(currentBlock)}: {e}")
 	except json.JSONDecodeError as e:
-		raise json.JSONDecodeError("Failed to parse JSON structure file: "+str(e))
+		raise json.JSONDecodeError("Failed to parse JSON structure file: "+str(e), e.doc, e.pos)
 	except ValueError as e:
 		raise ValueError("JSON structure file " + str(e))
 	except (AssetReadError, AssetReadErrorGeneric) as e:
@@ -702,12 +713,19 @@ def getFileType(file, size) -> str:
 	# first of all we can just easily check if it's a kv3 file...
 	startPos = file.tell()
 	if(size >= 4):
-		magic = struct.unpack("<I", file.read(4))[0]
+		magic = file.read(4)
 		file.seek(startPos, os.SEEK_SET)
-		if magic == 1263940356:
+		if magic == b'\x043VK':
 			return "kv3v4"
-		elif magic == 1263940355:
+		elif magic == b'\x033VK':
 			return "kv3v3"
+		# ! Since we don't support kv3v1 or v2 yet, use older 'vkv3' format for writing.
+		elif magic == b'\x023VK':
+			return "vkv3"
+		elif magic == b'\x013VK':
+			return "vkv3"
+		elif magic == b'VKV\x03':
+			return "vkv3"
 	# guess between text or binary based on data.
 	bytes = file.read(size)
 	global cachedReadData
