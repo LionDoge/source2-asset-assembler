@@ -715,7 +715,9 @@ def getFileType(file, size) -> str:
 	if(size >= 4):
 		magic = file.read(4)
 		file.seek(startPos, os.SEEK_SET)
-		if magic == b'\x043VK':
+		if magic == b'\x053VK':
+			return "kv3v4"
+		elif magic == b'\x043VK':
 			return "kv3v4"
 		elif magic == b'\x033VK':
 			return "kv3v3"
@@ -726,6 +728,8 @@ def getFileType(file, size) -> str:
 			return "vkv3"
 		elif magic == b'VKV\x03':
 			return "vkv3"
+		elif magic[1:] == b'3VK': # for unknown versions default to newest.
+			return "kv3v4"
 	# guess between text or binary based on data.
 	bytes = file.read(size)
 	global cachedReadData
