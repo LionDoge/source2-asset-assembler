@@ -28,7 +28,6 @@ class FileFormattingError(Exception):
 		self.line = line
 
 class KVType(IntEnum):
-	STRING_MULTI = 0,
 	NULL = 1,
 	BOOLEAN = 2,
 	INT64 = 3,
@@ -865,6 +864,9 @@ if __name__ == "__main__":
 	parser.add_argument("-o", "--output",
 					 help="Output file name or path",
 					 type=str, metavar="<output file>", required=True)
+	parser.add_argument("--force-bin-input",
+					 help="Force all input files to be read and processed literally as bytes that will end up in the asset file. Only works for edit mode",
+					 action="store_true")
 	
 	args = parser.parse_args()
 	if args.verbose:
@@ -906,6 +908,10 @@ if __name__ == "__main__":
 				currBlock = args.edit[idx+1]
 				fullPath = Path(file).resolve()
 				blockIdx = matchBlockIndexFromString(assetInfo, currBlock)
+				if (args.force_bin_input):
+					printDebug(f"Forcing binary input for block {assetInfo.blocks[blockIdx].name} from file {fullPath}")
+					assetInfo.blocks[blockIdx].type = "bin"
+			
 				assetInfo.blocks[blockIdx].data = readBytesFromFile(fullPath, assetInfo.blocks[blockIdx].type)
 				assetInfo.blocks[blockIdx].dataProcessed = False # we need to reprocess the data.
 			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
