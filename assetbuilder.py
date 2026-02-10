@@ -840,6 +840,7 @@ def printDebug(msg):
 if __name__ == "__main__":
 	example = '''example:
 
+	%(prog)s -e existing_asset.vmdl_c DATA -f data_replacement.kv3 -o output.vmdl_c
 	%(prog)s -s pulse_schema.json -o output.vpulse_c
 	%(prog)s -p vrr -f vrr_redi.kv3 vrr_data.kv3 -o output.vrr_c'''
 	parser = argparse.ArgumentParser(description="Tool to assemble Source 2 assets manually.", epilog=example,
