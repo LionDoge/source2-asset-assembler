@@ -1,5 +1,5 @@
-from assetbuilder import readAssetFile, AssetInfo, FileBlock, readRERLTextFile, FileFormattingError, AssetReadError
-from test_writers import example_rerl_source
+from s2assetassembler.assetbuilder import readAssetFile, AssetInfo, FileBlock, readRERLTextFile, FileFormattingError, AssetReadError
+from tests.test_writers import example_rerl_source
 import pytest
 
 @pytest.fixture

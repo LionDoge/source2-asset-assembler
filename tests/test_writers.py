@@ -1,4 +1,4 @@
-from assetbuilder import buildRERLBlock
+from s2assetassembler.assetbuilder import buildRERLBlock
 import pytest
 
 @pytest.fixture

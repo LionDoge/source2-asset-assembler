@@ -852,7 +852,7 @@ class CompactListHelpFormatter(argparse.RawDescriptionHelpFormatter):
 			return f"{action.metavar} ..."
 		return super()._format_args(action, default_metavar)
 
-if __name__ == "__main__":
+def main():
 	example = '''example:
 
 	%(prog)s -e existing_asset.vmdl_c DATA -f data_replacement.kv3 -o output.vmdl_c
@@ -964,3 +964,6 @@ if __name__ == "__main__":
 	except Exception as e:
 		print("Failed to write output file: " + str(e))
 		sys.exit(1)
+
+if __name__ == "__main__":
+	main()

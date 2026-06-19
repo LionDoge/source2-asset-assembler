@@ -1,4 +1,4 @@
-from assetbuilder import AssetInfo, FileBlock, matchBlockIndexFromString, getFileType, tryGetGameDirectoryFromContent
+from s2assetassembler.assetbuilder import AssetInfo, FileBlock, matchBlockIndexFromString, getFileType, tryGetGameDirectoryFromContent
 import pytest
 from pathlib import Path
 @pytest.fixture

@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 import json
-from assetbuilder import  parseJsonStructure, AssetInfo, FileBlock, AssetReadErrorGeneric
+from s2assetassembler.assetbuilder import  parseJsonStructure, AssetInfo, FileBlock, AssetReadErrorGeneric
 
 SAMPLE_FILES_PATH = Path("tests/files/samples")
 class JsonDATA:

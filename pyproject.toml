@@ -1,0 +1,26 @@
+[project]
+name = "s2assetassembler"
+authors = [{name = "liondoge"}]
+keywords = ["source2", "valve", "assetassembler"]
+version = "0.4.0"
+description = "Tool to assemble various Source 2 assets manually "
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "keyvalues3==0.6",
+]
+
+[project.scripts]
+s2asm = "s2assetassembler.assetbuilder:main"
+
+[project.urls]
+Source = "https://github.com/LionDoge/source2-asset-assembler"
+
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
