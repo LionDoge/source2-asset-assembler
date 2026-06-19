@@ -837,7 +837,23 @@ def tryGetGameDirectoryFromContent(path: Path) -> Path | None:
 	fullPath = Path(*partList)
 	fullPath.mkdir(parents=True, exist_ok=True)
 	return fullPath
-		
+
+"""
+Check if any path was provided (even './'), if not, we will try to automatically grab the game directory, and use the provided filename.
+otherwise  the full provided path will be returned
+"""
+def resolveOutputPath(output: str):
+    fullPath = Path(output)
+    if output == fullPath.as_posix():
+     outDir = tryGetGameDirectoryFromContent(Path(os.getcwd()))
+			# if only filename given, but not in a valid content dir, then output to CWD
+     if(outDir is None):
+      outFile = Path(os.getcwd()) / output
+     else:
+      outFile = outDir / output
+    else:
+     outFile = output
+    return outFile
 
 g_isVerbose = False
 def printDebug(msg):
@@ -883,6 +899,9 @@ def main():
 	parser.add_argument("--force-bin-input",
 					 help="Force all input files to be read and processed literally as bytes that will end up in the asset file. Only works for edit mode",
 					 action="store_true")
+	input_group.add_argument("-x", "--extract",
+					help="Extract blocks from a compiled asset file as-is, useful for programatically reading/modifying them later. Outputs will be called: $(outputname).$(blockname)",
+					type=str, nargs="+", metavar=("<compiled asset file>", "<block1>", "<block2>"))
 	
 	args = parser.parse_args()
 	if args.verbose:
@@ -919,8 +938,7 @@ def main():
 				print("--edit argument requires a compiled asset file.")
 				sys.exit(1)
 			assetInfo: AssetInfo = readAssetFile(args.edit[0], True)
-			maxBlocks: int = len(args.edit) - 1
-			for idx, file in enumerate(args.files):
+			for idx, file in enumerate(args.files[1:]):
 				currBlock = args.edit[idx+1]
 				fullPath = Path(file).resolve()
 				blockIdx = matchBlockIndexFromString(assetInfo, currBlock)
@@ -931,8 +949,22 @@ def main():
 				assetInfo.blocks[blockIdx].data = readBytesFromFile(fullPath, assetInfo.blocks[blockIdx].type)
 				assetInfo.blocks[blockIdx].dataProcessed = False # we need to reprocess the data.
 			binaryData = buildFileData(assetInfo.version, assetInfo.headerVersion, assetInfo.blocks)
+		elif args.extract is not None:
+			if (len(args.extract) == 1):
+				print("No blocks specified for extraction, at least one block must be specified after the file name.")
+				sys.exit(1)
+			assetInfo: AssetInfo = readAssetFile(args.extract[0], True)
+			for idx, file in enumerate(args.extract[1:]):
+				currBlock = args.extract[idx+1]
+				blockIdx = matchBlockIndexFromString(assetInfo, currBlock)
+				block = assetInfo.blocks[blockIdx]
+				outFile = args.output + "." + block.name
+				with open(outFile, "wb") as f:
+					print(f"Writing output file: {outFile}")
+					f.write(block.data)
+			sys.exit(0)
 		else:
-			print("One of the following flags is required to compile an asset: -s, -p, -b, -e Use -h for help.")
+			print("One of the following flags is required: -s, -p, -b, -e, -x Use -h for help.")
 			sys.exit(0)
 	except (FileNotFoundError, ValueError) as e: # let's not handle json and kv3 errors, it might be useful to get a full call stack.
 		print("ERROR: " + str(e) + "\nAsset was not processed.")
@@ -945,19 +977,7 @@ def main():
 		print(f"ERROR: {e}\n...in file {e.filePath}")
 		sys.exit(1)
 	try:
-		outFile: str = ""
-		# we will check if any path was provided (even './'), if not, we will try to automatically grab the game directory, and use the provided filename.
-		# otherwise we will use the full provided path for the output.
-		fullPath = Path(args.output)
-		if args.output == fullPath.as_posix():
-			outDir = tryGetGameDirectoryFromContent(Path(os.getcwd()))
-			# if only filename given, but not in a valid content dir, then output to CWD
-			if(outDir is None):
-				outFile = Path(os.getcwd()) / args.output
-			else:
-				outFile = outDir / args.output
-		else:
-			outFile = args.output
+		outFile = resolveOutputPath(args.output)
 		with open(outFile, "wb") as f:
 			print(f"Writing output file: {outFile}")
 			f.write(binaryData)
