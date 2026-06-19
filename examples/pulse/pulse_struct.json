@@ -7,12 +7,12 @@
         {
             "type": "kv3",
             "name": "RED2",
-            "file": "eventhandler_redi.kv3"
+            "file": "pulsesample_redi.kv3"
         },
         {
             "type": "kv3",
             "name": "DATA",
-            "file": "eventhandler.kv3"
+            "file": "pulsesample.vpulse"
         }
     ]
 }
