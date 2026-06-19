@@ -331,7 +331,6 @@ def getKV3MappedFlag(flag: kv3.Flag, useLinearTypes: bool) -> int:
 			case kv3.Flag.subclass:
 				return 5
 			case _:
-				print("unhandled flag: " + str(flag))
 				return -1
 	else:
 		match flag:
@@ -348,7 +347,6 @@ def getKV3MappedFlag(flag: kv3.Flag, useLinearTypes: bool) -> int:
 			case kv3.Flag.subclass:
 				return 32
 			case _:
-				print("unhandled flag: " + str(flag))
 				return -1
 # special types like DOUBLE_ZERO, INT64_ONE can't exist in typed arrays, so we use default types
 def getKVTypeFromInstance(obj, inTypedArray: bool = False):
