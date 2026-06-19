@@ -938,7 +938,7 @@ def main():
 				print("--edit argument requires a compiled asset file.")
 				sys.exit(1)
 			assetInfo: AssetInfo = readAssetFile(args.edit[0], True)
-			for idx, file in enumerate(args.files[1:]):
+			for idx, file in enumerate(args.files):
 				currBlock = args.edit[idx+1]
 				fullPath = Path(file).resolve()
 				blockIdx = matchBlockIndexFromString(assetInfo, currBlock)
