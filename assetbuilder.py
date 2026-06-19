@@ -193,8 +193,8 @@ def buildTextBlock(textData, textHeaderInfo, visualName: str = "unnamed block") 
 	return textData
 
 def buildKVBlock(block_data: kv3.KV3File, guid: UUID, header_info, kv3version: int = 4, visualName: str = "unnamed block") -> bytes:
-	if kv3version != 4 and kv3version != 3 and kv3version != 1:
-		raise NotImplementedError("Unsupported KV3 version: {kv3version}")
+	if kv3version not in (1, 3, 4):
+		raise NotImplementedError(f"Unsupported KV3 version: {kv3version}")
 	if kv3version == 1:
 		stream: io.BytesIO = io.BytesIO() 
 		kv3.write(block_data, stream, encoding = kv3.ENCODING_BINARY_BLOCK_LZ4, 
@@ -288,11 +288,11 @@ def buildKVBlock(block_data: kv3.KV3File, guid: UUID, header_info, kv3version: i
 	blockDataBase = b''.join([kv3ver, "3VK".encode('ascii'), guid.bytes_le, constantsAfterGUID,
 						   	compressionFrameSize.to_bytes(2, 'little'),
 						   	headerData.countOfBinaryBytes.to_bytes(4, 'little'),
-							headerData.countOfIntegers.to_bytes(4, 'little'),
-							headerData.countOfEightByteValues.to_bytes(4, 'little'),
-							headerData.stringAndTypesBufferSize.to_bytes(4, "little"),
+						   	headerData.countOfIntegers.to_bytes(4, 'little'),
+						   	headerData.countOfEightByteValues.to_bytes(4, 'little'),
+						   	headerData.stringAndTypesBufferSize.to_bytes(4, "little"),
 						   	preallocValues, uncompressedSize, compressedSize, 
-							headerData.blockCount.to_bytes(4, "little"), blockTotalSize.to_bytes(4, "little")])
+						   	headerData.blockCount.to_bytes(4, "little"), blockTotalSize.to_bytes(4, "little")])
 	if kv3version == 4:
 		blockDataBase += countOfTwoByteValues.to_bytes(4, "little") + unknown.to_bytes(4, "little")
 	header_info.size = len(blockDataBase + blockDataCompressed) + len(rawBlockBytes)
@@ -331,13 +331,16 @@ def getKV3MappedFlag(flag: kv3.Flag, useLinearTypes: bool) -> int:
 			case kv3.Flag.subclass:
 				return 5
 			case _:
-				return 0
+				print("unhandled flag: " + str(flag))
+				return -1
 	else:
 		match flag:
 			case kv3.Flag.resource:
 				return 1
 			case kv3.Flag.resource_name:
 				return 2
+			case kv3.Flag.multilinestring:
+				return 4
 			case kv3.Flag.panorama:
 				return 8
 			case kv3.Flag.soundevent:
@@ -345,7 +348,8 @@ def getKV3MappedFlag(flag: kv3.Flag, useLinearTypes: bool) -> int:
 			case kv3.Flag.subclass:
 				return 32
 			case _:
-				return 0
+				print("unhandled flag: " + str(flag))
+				return -1
 # special types like DOUBLE_ZERO, INT64_ONE can't exist in typed arrays, so we use default types
 def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 	if type(obj) is list:
@@ -404,8 +408,11 @@ def getKVTypeFromInstance(obj, inTypedArray: bool = False):
 			return KVType.DOUBLE
 	elif obj is None:
 		return KVType.NULL
-	elif isinstance(obj, kv3.flagged_value): # assuming string value
-		return KVType.STRING | 0x80
+	elif isinstance(obj, kv3.flagged_value):
+		if (obj.flags != kv3.Flag.multilinestring):
+			return getKVTypeFromInstance(obj.value, inTypedArray) | 0x80
+		else:
+			return getKVTypeFromInstance(obj.value, inTypedArray)
 	elif isinstance(obj, bytearray):
 		return KVType.BINARY_BLOB
 	else:
@@ -492,7 +499,9 @@ def buildKVStructure(obj, header: KVBaseData, inTypedArray, useLinearFlagTypes =
 		if inTypedArray == False:
 			header.types += currentType.to_bytes(1)
 			if isinstance(obj, kv3.flagged_value):
-				header.types += getKV3MappedFlag(obj.flags, useLinearFlagTypes).to_bytes(1)
+				flagValue = getKV3MappedFlag(obj.flags, useLinearFlagTypes)
+				if flagValue != -1:
+					header.types += flagValue.to_bytes(1)
 		header.countOfIntegers += 1
 	elif isinstance(obj, bool):
 		if inTypedArray == False:
@@ -837,6 +846,14 @@ def printDebug(msg):
 	if g_isVerbose:
 		print(msg)
 
+class CompactListHelpFormatter(argparse.RawDescriptionHelpFormatter):
+	def _format_args(self, action, default_metavar):
+		if action.nargs == "+" and action.metavar is not None:
+			if isinstance(action.metavar, tuple):
+				return " ".join(action.metavar) + " ..."
+			return f"{action.metavar} ..."
+		return super()._format_args(action, default_metavar)
+
 if __name__ == "__main__":
 	example = '''example:
 
@@ -844,7 +861,7 @@ if __name__ == "__main__":
 	%(prog)s -s pulse_schema.json -o output.vpulse_c
 	%(prog)s -p vrr -f vrr_redi.kv3 vrr_data.kv3 -o output.vrr_c'''
 	parser = argparse.ArgumentParser(description="Tool to assemble Source 2 assets manually.", epilog=example,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+                                 formatter_class=CompactListHelpFormatter)
 	parser.add_argument("-v", "--verbose", help="Enable verbose output", action="store_true")
 	input_group = parser.add_mutually_exclusive_group(required=True)
 	input_group.add_argument("-b", "--base",
@@ -857,11 +874,11 @@ if __name__ == "__main__":
 								help="Use a preset for the file structure, supported presets: " + ', '.join(list(assetPresetInfo.keys())),
 								type=str, metavar="<preset>")
 	input_group.add_argument("-e", "--edit", 
-								help="Edit an existing asset file, requires -f flag with the same amount of files as the base file.",
-								type=str, nargs="+", metavar="<compiled asset file> <BLOCK1> <BLOCK2> ...")
+								help="Edit an existing asset file, requires -f flag with the same amount of files as the provided amount of blocks.",
+								type=str, nargs="+", metavar=("<compiled asset file>", "<BLOCK1>", "<BLOCK2>"))
 	parser.add_argument("-f", "--files", 
 					 help="List of files to use, only to be used with -b or -p, amount of files depends on the structure of the base file/preset that was specified",
-					 type=str, nargs="+", metavar="<file1> <file2> ...")
+						 type=str, nargs="+", metavar=("<file1>", "<file2>"))
 	parser.add_argument("-o", "--output",
 					 help="Output file name or path",
 					 type=str, metavar="<output file>", required=True)
