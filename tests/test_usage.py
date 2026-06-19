@@ -15,7 +15,7 @@ class Test:
     compilerOutputFile: str
 
     def run(self):
-        subprocess.run(["python", "assetbuilder.py", *self.launchArgs, "-o", self.compilerOutputFile], check=True)
+        subprocess.run(["uv", "run", "s2assetassembler/assetbuilder.py", *self.launchArgs, "-o", self.compilerOutputFile], check=True)
         # add _d to the end of the file name and remove _c from the extension
         extensionPos = self.compilerOutputFile.rfind('.')
         decompiledName = self.compilerOutputFile[:extensionPos] + "_d" + self.compilerOutputFile[extensionPos:-2]
