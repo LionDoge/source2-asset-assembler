@@ -5,4 +5,7 @@
     c = panorama:"panorama"
     d = soundevent:"soundevent"
     e = subclass:"subclass"
+    f = """
+    multiline
+"""
 }
